@@ -63,7 +63,7 @@ st.markdown(
     .badge-media { background-color: #eab308; }
     .badge-baixa { background-color: #22c55e; }
 
-    /* Timeline de Comentários no Relatório e Modal */
+    /* Timeline de Comentários */
     .comment-item {
         background-color: #f8fafc;
         border: 1px solid #e2e8f0;
@@ -315,7 +315,6 @@ def carregar_dados():
 
         df_base["Status"] = df_base["Status"].replace({"Congos": "Concluído"})
 
-        # Calcula Dinamicamente a Data da Última Ação Registrada
         df_base["Ultima_Acao"] = df_base.apply(
             lambda r: extrair_data_ultima_acao(
                 r.get("Timeline_JSON", "[]"), r.get("Data_Inicio", "-")
@@ -331,7 +330,6 @@ def carregar_dados():
 
 def salvar_dados(dataframe):
     try:
-        # Recalcula Última Ação antes de salvar
         if "Timeline_JSON" in dataframe.columns:
             dataframe["Ultima_Acao"] = dataframe.apply(
                 lambda r: extrair_data_ultima_acao(
@@ -487,22 +485,43 @@ if "colunas_kanban_custom" not in st.session_state:
         "Concluído",
     ]
 
-# Filtro por Projeto
+# ---------------------------------------------------------
+# FILTROS PRINCIPAIS NA SIDEBAR (PROJETO + PERÍODO DE DATA)
+# ---------------------------------------------------------
 st.sidebar.divider()
-st.sidebar.title("🔍 Filtro por Projeto")
+st.sidebar.title("🔍 Filtros Gerais")
+
 projetos_disponiveis = ["Todos os Projetos"] + list(
     df["Cliente_Projeto"].unique()
 )
 projeto_selecionado = st.sidebar.selectbox(
-    "📌 Selecione o Projeto / Cliente:", options=projetos_disponiveis
+    "📌 Projeto / Cliente:", options=projetos_disponiveis
 )
 
-if projeto_selecionado != "Todos os Projetos":
-    df_filtrado = df[df["Cliente_Projeto"] == projeto_selecionado]
-else:
-    df_filtrado = df.copy()
+# FILTRO 3: FILTRO DE DATA DE INÍCIO DA AÇÃO NA SIDEBAR
+filtro_datas = st.sidebar.date_input(
+    "📅 Período (Data de Início):",
+    value=(datetime.date(2026, 1, 1), datetime.date(2026, 12, 31)),
+    key="sb_filtro_periodo",
+)
 
-# Estruturação de Abas
+df_filtrado = df.copy()
+
+if projeto_selecionado != "Todos os Projetos":
+    df_filtrado = df_filtrado[
+        df_filtrado["Cliente_Projeto"] == projeto_selecionado
+    ]
+
+if isinstance(filtro_datas, tuple) and len(filtro_datas) == 2:
+    d_inicio, d_fim = filtro_datas
+    df_filtrado["dt_tmp_inicio"] = pd.to_datetime(
+        df_filtrado["Data_Inicio"], errors="coerce"
+    ).dt.date
+    df_filtrado = df_filtrado[
+        (df_filtrado["dt_tmp_inicio"] >= d_inicio)
+        & (df_filtrado["dt_tmp_inicio"] <= d_fim)
+    ]
+
 abas = [
     "📊 Painel Executivo (BI & Governança)",
     "⚙️ Operações e Gestão de Projetos (CRUD)",
@@ -518,10 +537,17 @@ tabs = st.tabs(abas)
 
 
 # ---------------------------------------------------------
-# DIALOG NATIVO COMPACTO E AMPLO (POPUP MODAL MODERNO)
+# FUNÇÃO DIALOG (MODAL) SEM ERRO DE DUPLICIDADE (CORREÇÃO 2)
 # ---------------------------------------------------------
 @st.dialog("📋 Detalhes & Rastreabilidade do Apontamento", width="large")
-def exibir_modal_detalhes_projeto(row_item):
+def modal_detalhes_dialog(id_projeto):
+    match_row = df[df["ID"] == id_projeto]
+    if match_row.empty:
+        st.error("Projeto não encontrado.")
+        return
+
+    row_item = match_row.iloc[0]
+
     st.markdown(f"### Projeto: {row_item['Cliente_Projeto']}")
     c_m1, c_m2, c_m3 = st.columns(3)
     c_m1.write(f"**ID:** #{row_item['ID']}")
@@ -579,8 +605,7 @@ def exibir_modal_detalhes_projeto(row_item):
         "Upload de Evidência:", key=f"dlg_file_{row_item['ID']}"
     )
 
-    c_s1, c_s2 = st.columns([1, 1])
-    if c_s1.button("💾 Salvar Histórico", key=f"dlg_save_{row_item['ID']}"):
+    if st.button("💾 Salvar Histórico", key=f"dlg_save_{row_item['ID']}"):
         if txt_coment or file_coment:
             try:
                 nome_anexo = None
@@ -610,24 +635,42 @@ def exibir_modal_detalhes_projeto(row_item):
             except Exception as e:
                 st.error(f"Erro ao salvar histórico: {e}")
 
-    # ITEM 3: EXCLUSÃO DE PROJETOS DENTRO DO MODAL
-    if c_s2.button(
-        "🗑️ Excluir Este Projeto",
-        key=f"dlg_del_{row_item['ID']}",
-        type="primary",
-    ):
-        try:
-            df_novo = df[df["ID"] != row_item["ID"]].copy()
-            salvar_dados(df_novo)
-            st.session_state["df_auditoria"] = df_novo
-            registrar_log(
-                user_info["Usuario"], "Exclusão", f"Excluiu ID {row_item['ID']}"
-            )
-            st.success("Projeto excluído com sucesso!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Erro ao excluir projeto: {e}")
+    # CORREÇÃO 1: EXCLUSÃO COM DOUBLE CONFIRMATION NO MODAL
+    st.divider()
+    with st.expander("⚠️ Área de Risco: Excluir Apontamento"):
+        st.write("Para excluir permanentemente este projeto, confirme abaixo:")
+        chk_del = st.checkbox(
+            "Eu compreendo e desejo excluir permanentemente este registro.",
+            key=f"chk_del_dlg_{row_item['ID']}",
+        )
+        if st.button(
+            "🔥 CONFIRMAR EXCLUSÃO DEFINITIVA",
+            key=f"btn_confirm_del_dlg_{row_item['ID']}",
+            type="primary",
+            disabled=not chk_del,
+        ):
+            try:
+                df_novo = df[df["ID"] != row_item["ID"]].copy()
+                salvar_dados(df_novo)
+                st.session_state["df_auditoria"] = df_novo
+                st.session_state["id_modal_aberto"] = None
+                registrar_log(
+                    user_info["Usuario"],
+                    "Exclusão",
+                    f"Excluiu ID {row_item['ID']}",
+                )
+                st.success("Projeto excluído com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao excluir o projeto: {e}")
 
+
+# GERENCIADOR DE ABERTURA DO MODAL
+if (
+    "id_modal_aberto" in st.session_state
+    and st.session_state["id_modal_aberto"]
+):
+    modal_detalhes_dialog(st.session_state["id_modal_aberto"])
 
 # ---------------------------------------------------------
 # TELA 1: PAINEL EXECUTIVO COMPLETO
@@ -721,97 +764,106 @@ with tabs[0]:
 
     with g1:
         st.markdown("##### 🍩 Distribuição por Status")
-        fig_donut = go.Figure(
-            data=[
-                go.Pie(
-                    labels=df_filtrado["Status"].value_counts().index,
-                    values=df_filtrado["Status"].value_counts().values,
-                    hole=0.55,
-                    marker=dict(
-                        colors=[
-                            "#22c55e",
-                            "#3b82f6",
-                            "#f97316",
-                            "#ef4444",
-                            "#64748b",
-                        ]
-                    ),
-                    textinfo="label+percent",
-                )
-            ]
-        )
-        fig_donut.update_layout(
-            showlegend=False,
-            margin=dict(t=20, b=20, l=10, r=10),
-            height=260,
-            annotations=[
-                dict(
-                    text=f"<b>{total_achados}</b><br>Ações",
-                    x=0.5,
-                    y=0.5,
-                    font_size=16,
-                    showarrow=False,
-                )
-            ],
-        )
-        st.plotly_chart(fig_donut, use_container_width=True)
+        if not df_filtrado.empty:
+            fig_donut = go.Figure(
+                data=[
+                    go.Pie(
+                        labels=df_filtrado["Status"].value_counts().index,
+                        values=df_filtrado["Status"].value_counts().values,
+                        hole=0.55,
+                        marker=dict(
+                            colors=[
+                                "#22c55e",
+                                "#3b82f6",
+                                "#f97316",
+                                "#ef4444",
+                                "#64748b",
+                            ]
+                        ),
+                        textinfo="label+percent",
+                    )
+                ]
+            )
+            fig_donut.update_layout(
+                showlegend=False,
+                margin=dict(t=20, b=20, l=10, r=10),
+                height=260,
+                annotations=[
+                    dict(
+                        text=f"<b>{total_achados}</b><br>Ações",
+                        x=0.5,
+                        y=0.5,
+                        font_size=16,
+                        showarrow=False,
+                    )
+                ],
+            )
+            st.plotly_chart(fig_donut, use_container_width=True)
+        else:
+            st.info("Sem dados para o filtro aplicado.")
 
     with g2:
         st.markdown("##### 📊 Matriz de Riscos por Área e Severidade")
-        fig_bar_sev = px.bar(
-            df_filtrado,
-            x="Area_Responsavel",
-            color="Severidade",
-            color_discrete_map={
-                "Crítica": "#ef4444",
-                "Alta": "#f97316",
-                "Média": "#eab308",
-                "Baixa": "#22c55e",
-            },
-            barmode="stack",
-            labels={
-                "Area_Responsavel": "Área Responsável",
-                "count": "Qtd Apontamentos",
-            },
-        )
-        fig_bar_sev.update_layout(
-            margin=dict(t=20, b=20, l=10, r=10),
-            height=260,
-            legend=dict(
-                orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
-            ),
-        )
-        st.plotly_chart(fig_bar_sev, use_container_width=True)
+        if not df_filtrado.empty:
+            fig_bar_sev = px.bar(
+                df_filtrado,
+                x="Area_Responsavel",
+                color="Severidade",
+                color_discrete_map={
+                    "Crítica": "#ef4444",
+                    "Alta": "#f97316",
+                    "Média": "#eab308",
+                    "Baixa": "#22c55e",
+                },
+                barmode="stack",
+                labels={
+                    "Area_Responsavel": "Área Responsável",
+                    "count": "Qtd Apontamentos",
+                },
+            )
+            fig_bar_sev.update_layout(
+                margin=dict(t=20, b=20, l=10, r=10),
+                height=260,
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1,
+                ),
+            )
+            st.plotly_chart(fig_bar_sev, use_container_width=True)
 
     with g3:
         st.markdown("##### 🏢 Concentração de Riscos por Unidade")
-        agencia_counts = df_filtrado["Agencia"].value_counts().reset_index()
-        agencia_counts.columns = ["Agencia", "Quantidade"]
+        if not df_filtrado.empty:
+            agencia_counts = (
+                df_filtrado["Agencia"].value_counts().reset_index()
+            )
+            agencia_counts.columns = ["Agencia", "Quantidade"]
 
-        fig_agencia = px.bar(
-            agencia_counts,
-            y="Agencia",
-            x="Quantidade",
-            orientation="h",
-            color_discrete_sequence=["#0284c7"],
-            text="Quantidade",
-        )
-        fig_agencia.update_layout(
-            margin=dict(t=20, b=20, l=10, r=10),
-            height=260,
-            xaxis_title="Apontamentos",
-            yaxis_title="",
-        )
-        st.plotly_chart(fig_agencia, use_container_width=True)
+            fig_agencia = px.bar(
+                agencia_counts,
+                y="Agencia",
+                x="Quantidade",
+                orientation="h",
+                color_discrete_sequence=["#0284c7"],
+                text="Quantidade",
+            )
+            fig_agencia.update_layout(
+                margin=dict(t=20, b=20, l=10, r=10),
+                height=260,
+                xaxis_title="Apontamentos",
+                yaxis_title="",
+            )
+            st.plotly_chart(fig_agencia, use_container_width=True)
 
     st.divider()
 
-    # ITEM 6: MATRIZ COM DATA DA ÚLTIMA AÇÃO E NAVEGAÇÃO RÁPIDA POR CLIQUE
-    st.markdown(
-        "### ⚠️ Matriz de Riscos Críticos e Ações em Atraso (Clique para Detalhar)"
-    )
+    # CORREÇÃO 4: MATRIZ COMPLETA COM TODOS OS CASOS
+    st.markdown("### 📋 Matriz Geral de Apontamentos (Todos os Registros)")
     st.caption(
-        "💡 Selecione uma linha da tabela para abrir os detalhes completos e o histórico do projeto na hora."
+        "💡 Selecione uma linha da tabela para abrir os detalhes completos e o histórico no modal."
     )
 
     cols_exibir_matriz = [
@@ -825,31 +877,28 @@ with tabs[0]:
         "Ultima_Acao",
         "Status",
     ]
-    df_urgente = df_filtrado[
-        (df_filtrado["Severidade"].isin(["Crítica", "Alta"]))
-        | (df_filtrado["Status"] == "Atrasado")
-    ][cols_exibir_matriz]
 
-    if len(df_urgente) == 0:
-        st.success("🎉 Nenhuma ação urgente ou atrasada no momento!")
+    df_matriz_completa = df_filtrado[cols_exibir_matriz]
+
+    if df_matriz_completa.empty:
+        st.info("Nenhum apontamento encontrado para o filtro selecionado.")
     else:
-        # Tabela com Seleção Interativa por Clique
         event = st.dataframe(
-            df_urgente,
+            df_matriz_completa,
             use_container_width=True,
             selection_mode="single-row",
             on_select="rerun",
+            key="df_matriz_interativa",
         )
 
-        # Se o usuário clicar em uma linha, abre o modal na hora
         if event and event.selection and event.selection.rows:
             row_idx = event.selection.rows[0]
-            item_selecionado = df_urgente.iloc[row_idx]
-            row_completa = df[df["ID"] == item_selecionado["ID"]].iloc[0]
-            exibir_modal_detalhes_projeto(row_completa)
+            item_selecionado = df_matriz_completa.iloc[row_idx]
+            st.session_state["id_modal_aberto"] = item_selecionado["ID"]
+            st.rerun()
 
 # ---------------------------------------------------------
-# TELA 2: OPERAÇÕES E GESTÃO DE PROJETOS (CRUD + EXCLUSÃO)
+# TELA 2: OPERAÇÕES E GESTÃO DE PROJETOS (CRUD COM DOUBLE CONFIRMATION)
 # ---------------------------------------------------------
 with tabs[1]:
     st.markdown("### ⚙️ Gestão de Projetos e Apontamentos")
@@ -1005,7 +1054,7 @@ with tabs[1]:
                     except Exception as e:
                         st.error(f"Erro ao salvar edição: {e}")
 
-    # ITEM 3: ABA DEDICADA DE EXCLUSÃO DE PROJETOS
+    # CORREÇÃO 1: EXCLUSÃO COM DOUBLE CONFIRMATION NA ABA DE GESTÃO
     with sub_t3:
         if not df.empty:
             st.warning("⚠️ Atenção: A exclusão de um projeto é irreversível.")
@@ -1021,7 +1070,16 @@ with tabs[1]:
                 key="sb_del_id",
             )
 
-            if st.button("🗑️ Confirmar Exclusão do Apontamento", type="primary"):
+            chk_crud_del = st.checkbox(
+                "Confirmo que desejo apagar permanentemente este projeto do banco de dados.",
+                key="chk_crud_del",
+            )
+
+            if st.button(
+                "🗑️ CONFIRMAR EXCLUSÃO DO PROJETO",
+                type="primary",
+                disabled=not chk_crud_del,
+            ):
                 try:
                     df_novo = df[df["ID"] != id_del].copy()
                     salvar_dados(df_novo)
@@ -1035,12 +1093,12 @@ with tabs[1]:
                     st.error(f"Erro ao excluir o projeto: {e}")
 
 # ---------------------------------------------------------
-# TELA 3: CENTRAL DE PROJETOS (KANBAN COM POSICIONAMENTO E SEPARAÇÃO)
+# TELA 3: CENTRAL DE PROJETOS (KANBAN)
 # ---------------------------------------------------------
 with tabs[2]:
     st.markdown("### 📌 Quadro Visual de Projetos & Ações")
 
-    # ITEM 1: LIBERDADE DE ESCOLHER A POSIÇÃO DAS COLUNAS
+    # GERENCIAMENTO DE COLUNAS COM CONFIRMAÇÃO DUPLA
     with st.expander("🛠️ Personalizar e Reordenar Colunas do Kanban"):
         c_k1, c_k2, c_k3 = st.columns([1.5, 1, 1.2])
 
@@ -1064,13 +1122,15 @@ with tabs[2]:
                 st.rerun()
 
         st.divider()
-        c_r1, c_r2 = st.columns(2)
+        c_r1, c_r2, c_r3 = st.columns([1.5, 1, 1])
         col_del_k = c_r1.selectbox(
             "Excluir Coluna:",
             options=st.session_state["colunas_kanban_custom"],
             key="sb_del_col",
         )
-        if c_r2.button("❌ Remover Coluna"):
+        chk_col_del = c_r2.checkbox("Confirmar exclusão da coluna", key="chk_col_del")
+
+        if c_r3.button("❌ Remover Coluna", disabled=not chk_col_del):
             if len(st.session_state["colunas_kanban_custom"]) > 1:
                 st.session_state["colunas_kanban_custom"].remove(col_del_k)
                 st.rerun()
@@ -1089,7 +1149,6 @@ with tabs[2]:
         else:
             return [col_nome]
 
-    # ITEM 2: SEPARAÇÃO NITIDA E ESTILIZADA ENTRE OS CARDS
     for index, col_nome in enumerate(st.session_state["colunas_kanban_custom"]):
         with cols_st[index]:
             st.markdown(f"#### 📌 {col_nome}")
@@ -1099,7 +1158,6 @@ with tabs[2]:
             for _, row in itens.iterrows():
                 sev_class = f"card-{str(row['Severidade']).lower()}"
 
-                # Card com Estilo Separador Refinado
                 st.markdown(
                     f"""
                 <div class="kanban-box {sev_class}">
@@ -1145,9 +1203,10 @@ with tabs[2]:
                             st.error(f"Erro ao mover o cartão: {e}")
 
                 with c_btn2:
-                    # ITEM 3: CHAMADA DO NOVO MODAL / POPUP AMPLO
+                    # CORREÇÃO 2: ABERTURA DO MODAL SEM DUPLICAR ELEMENTOS DE DIALOG
                     if st.button("🔍 Detalhes", key=f"btn_pop_{row['ID']}"):
-                        exibir_modal_detalhes_projeto(row)
+                        st.session_state["id_modal_aberto"] = row["ID"]
+                        st.rerun()
 
 # ---------------------------------------------------------
 # TELA 4: MESTRE CENTRAL DE ANEXOS E HISTÓRICO
@@ -1202,7 +1261,7 @@ with tabs[3]:
                             st.image(p_m, use_container_width=True)
 
 # ---------------------------------------------------------
-# TELA 5: EXTRATOR DE RELATÓRIOS (FILTROS DE PERÍODO & VISÃO CASCATA DRE)
+# TELA 5: EXTRATOR DE RELATÓRIOS
 # ---------------------------------------------------------
 with tabs[4]:
     st.markdown("### 📥 Extrator Inteligente de Relatórios Executivos")
@@ -1210,7 +1269,6 @@ with tabs[4]:
         "Filtre os dados por emissão ou conclusão e visualize a cascata auditável completa de apontamentos e ações."
     )
 
-    # ITENS 4 e 5: FILTROS DE PERÍODO (EMISSÃO E CONCLUSÃO) + PROJETO
     f_c1, f_c2, f_c3 = st.columns(3)
 
     proj_filtro_rel = f_c1.selectbox(
@@ -1231,13 +1289,11 @@ with tabs[4]:
         key="f_rel_conclusao",
     )
 
-    # Lógica de Filtragem dos Dados
     df_rel = df.copy()
 
     if proj_filtro_rel != "Todos os Projetos":
         df_rel = df_rel[df_rel["Cliente_Projeto"] == proj_filtro_rel]
 
-    # Filtro Data Emissão
     if isinstance(range_emissao, tuple) and len(range_emissao) == 2:
         dt_ini_e, dt_fim_e = range_emissao
         df_rel["dt_tmp_emissao"] = pd.to_datetime(
@@ -1250,7 +1306,6 @@ with tabs[4]:
 
     st.divider()
 
-    # DOWNLOAD FORMATADO CSV/EXCEL
     try:
         csv_data = df_rel.to_csv(index=False, sep=";").encode("utf-8-sig")
         st.download_button(
@@ -1264,7 +1319,6 @@ with tabs[4]:
 
     st.divider()
 
-    # ITEM 5: VISÃO EM CASCATA TIPO DRE (ESTRUTURADA E AUDITÁVEL)
     st.markdown("### 📊 Visão Auditável em Cascata (DRE de Governança)")
 
     if df_rel.empty:
@@ -1288,7 +1342,6 @@ with tabs[4]:
                     unsafe_allow_html=True,
                 )
 
-                # Histórico em Cascata
                 try:
                     hist_items = json.loads(
                         str(row_r.get("Timeline_JSON", "[]"))
