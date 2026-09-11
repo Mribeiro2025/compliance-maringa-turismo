@@ -1,7 +1,7 @@
 import datetime
 import json
 import os
-import numpy as np
+import io
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -33,7 +33,7 @@ st.markdown(
     .kpi-value { font-size: 1.8rem; font-weight: 800; color: #0f172a; margin-top: 4px; }
     .kpi-subtext { font-size: 0.75rem; color: #10b981; font-weight: 600; margin-top: 2px; }
 
-    /* Estilização Refinada dos Cartões Kanban com Separação Nítida */
+    /* Estilização Refinada dos Cartões Kanban */
     .kanban-box {
         background-color: #ffffff;
         border: 1px solid #cbd5e1;
@@ -110,10 +110,36 @@ if not os.path.exists(PASTA_EVIDENCIAS):
     os.makedirs(PASTA_EVIDENCIAS)
 
 
-# 2. HELPER FUNCTIONS: LOGS E USUÁRIOS
+# 2. HELPER FUNCTIONS: CONVERSÃO DE DATAS BRASIL
+def formatar_data_br(val_data):
+    if not val_data or str(val_data).strip() in ["-", "", "nan", "None"]:
+        return "-"
+    try:
+        dt = pd.to_datetime(str(val_data).split(" ")[0])
+        return dt.strftime("%d/%m/%Y")
+    except:
+        return str(val_data)
+
+
+def extrair_data_ultima_acao(json_str, data_inicio_fallback):
+    try:
+        timeline = json.loads(str(json_str))
+        if timeline and len(timeline) > 0:
+            datas = [
+                item.get("Data", "")
+                for item in timeline
+                if item.get("Data", "")
+            ]
+            if datas:
+                return datas[-1]
+    except:
+        pass
+    return formatar_data_br(data_inicio_fallback)
+
+
 def registrar_log(usuario, acao, detalhe):
     try:
-        data_hora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        data_hora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         novo_log = pd.DataFrame(
             [
                 {
@@ -182,23 +208,6 @@ def salvar_usuarios(df_u):
         df_salvar.to_excel(ARQUIVO_USUARIOS, index=False)
     except Exception as e:
         st.error(f"Erro ao salvar arquivo de usuários: {e}")
-
-
-# 3. BASE DE DADOS E EXTRAÇÃO DE ÚLTIMA AÇÃO
-def extrair_data_ultima_acao(json_str, data_inicio_fallback):
-    try:
-        timeline = json.loads(str(json_str))
-        if timeline and len(timeline) > 0:
-            datas = [
-                item.get("Data", "")
-                for item in timeline
-                if item.get("Data", "")
-            ]
-            if datas:
-                return datas[-1]
-    except:
-        pass
-    return str(data_inicio_fallback)
 
 
 def carregar_dados():
@@ -315,6 +324,7 @@ def carregar_dados():
 
         df_base["Status"] = df_base["Status"].replace({"Congos": "Concluído"})
 
+        # Recalcula Última Ação
         df_base["Ultima_Acao"] = df_base.apply(
             lambda r: extrair_data_ultima_acao(
                 r.get("Timeline_JSON", "[]"), r.get("Data_Inicio", "-")
@@ -340,6 +350,32 @@ def salvar_dados(dataframe):
         dataframe.to_excel(ARQUIVO_MATRIZ, index=False)
     except Exception as e:
         st.error(f"Erro ao salvar alterações da matriz: {e}")
+
+
+# HELPER FUNCTION PARA RENDERIZAR ANEXOS E BOTÃO DE DOWNLOAD
+def renderizar_anexo_elemento(nome_anexo, key_prefix):
+    if not nome_anexo or str(nome_anexo).strip() in ["None", "null", ""]:
+        return
+
+    caminho = os.path.join(PASTA_EVIDENCIAS, str(nome_anexo))
+    if os.path.exists(caminho):
+        st.markdown(f"📎 **Anexo Registrado:** `{nome_anexo}`")
+
+        # Se for imagem, exibe inline
+        if str(nome_anexo).lower().endswith((".png", ".jpg", ".jpeg")):
+            st.image(caminho, use_container_width=True)
+
+        # Para TODOS os arquivos (PDF, imagens, docs), disponibiliza o botão de Download
+        with open(caminho, "rb") as file_data:
+            st.download_button(
+                label=f"📥 Download Anexo ({nome_anexo.split('.')[-1].upper()})",
+                data=file_data,
+                file_name=nome_anexo,
+                mime="application/octet-stream",
+                key=f"btn_dl_{key_prefix}_{nome_anexo}",
+            )
+    else:
+        st.caption(f"📎 Anexo vinculado (`{nome_anexo}`), mas arquivo não localizado no servidor.")
 
 
 # Autenticação
@@ -422,7 +458,7 @@ is_master = user_info["Nivel"] == "Master"
 st.sidebar.markdown(f"**Usuário:** {user_info['Nome']}")
 st.sidebar.markdown(f"**Nível:** `{user_info['Nivel']}`")
 
-# TROCA DE SENHA SEGURA
+# TROCA DE SENHA
 with st.sidebar.popover("🔑 Trocar Minha Senha"):
     st.write("### Alterar Senha")
     senha_atual = st.text_input("Senha Atual:", type="password")
@@ -476,7 +512,7 @@ if "df_auditoria" not in st.session_state:
 
 df = st.session_state["df_auditoria"]
 
-# Colunas do Kanban Personalizáveis
+# Colunas do Kanban
 if "colunas_kanban_custom" not in st.session_state:
     st.session_state["colunas_kanban_custom"] = [
         "A Fazer / Atrasado",
@@ -486,7 +522,7 @@ if "colunas_kanban_custom" not in st.session_state:
     ]
 
 # ---------------------------------------------------------
-# FILTROS PRINCIPAIS NA SIDEBAR (PROJETO + PERÍODO DE DATA)
+# FILTROS PRINCIPAIS NA SIDEBAR (DATA DE/ATÉ SIMPLIFICADA)
 # ---------------------------------------------------------
 st.sidebar.divider()
 st.sidebar.title("🔍 Filtros Gerais")
@@ -498,11 +534,14 @@ projeto_selecionado = st.sidebar.selectbox(
     "📌 Projeto / Cliente:", options=projetos_disponiveis
 )
 
-# FILTRO 3: FILTRO DE DATA DE INÍCIO DA AÇÃO NA SIDEBAR
-filtro_datas = st.sidebar.date_input(
-    "📅 Período (Data de Início):",
-    value=(datetime.date(2026, 1, 1), datetime.date(2026, 12, 31)),
-    key="sb_filtro_periodo",
+# FILTRO 2: FILTRO DE DATA SIMPLIFICADO DE / ATÉ
+st.sidebar.write("📅 **Período de Emissão (Data Inicial):**")
+c_sb1, c_sb2 = st.sidebar.columns(2)
+dt_ini_sb = c_sb1.date_input(
+    "De:", value=datetime.date(2026, 1, 1), key="sb_dt_de", format="DD/MM/YYYY"
+)
+dt_fim_sb = c_sb2.date_input(
+    "Até:", value=datetime.date(2026, 12, 31), key="sb_dt_ate", format="DD/MM/YYYY"
 )
 
 df_filtrado = df.copy()
@@ -512,14 +551,13 @@ if projeto_selecionado != "Todos os Projetos":
         df_filtrado["Cliente_Projeto"] == projeto_selecionado
     ]
 
-if isinstance(filtro_datas, tuple) and len(filtro_datas) == 2:
-    d_inicio, d_fim = filtro_datas
+if dt_ini_sb and dt_fim_sb:
     df_filtrado["dt_tmp_inicio"] = pd.to_datetime(
         df_filtrado["Data_Inicio"], errors="coerce"
     ).dt.date
     df_filtrado = df_filtrado[
-        (df_filtrado["dt_tmp_inicio"] >= d_inicio)
-        & (df_filtrado["dt_tmp_inicio"] <= d_fim)
+        (df_filtrado["dt_tmp_inicio"] >= dt_ini_sb)
+        & (df_filtrado["dt_tmp_inicio"] <= dt_fim_sb)
     ]
 
 abas = [
@@ -537,7 +575,7 @@ tabs = st.tabs(abas)
 
 
 # ---------------------------------------------------------
-# FUNÇÃO DIALOG (MODAL) SEM ERRO DE DUPLICIDADE (CORREÇÃO 2)
+# MODAL / DIALOG DE DETALHES COM VISUALIZAÇÃO/DOWNLOAD DE ANEXOS
 # ---------------------------------------------------------
 @st.dialog("📋 Detalhes & Rastreabilidade do Apontamento", width="large")
 def modal_detalhes_dialog(id_projeto):
@@ -557,7 +595,7 @@ def modal_detalhes_dialog(id_projeto):
     st.markdown(f"**Achado Mapeado:** {row_item['Achado']}")
     st.markdown(f"**Ação Corretiva:** {row_item['Acao_Corretiva']}")
     st.info(
-        f"🛫 **Data Início:** {row_item.get('Data_Inicio', '-')} | 🎯 **Prazo:** {row_item.get('Prazo', '-')} | ⏱️ **Última Ação:** {row_item.get('Ultima_Acao', '-')}"
+        f"🛫 **Data Início:** {formatar_data_br(row_item.get('Data_Inicio'))} | 🎯 **Prazo:** {formatar_data_br(row_item.get('Prazo'))} | ⏱️ **Última Ação:** {row_item.get('Ultima_Acao', '-')}"
     )
 
     st.divider()
@@ -571,28 +609,20 @@ def modal_detalhes_dialog(id_projeto):
     if not timeline:
         st.caption("Nenhum comentário ou evidência anexada até o momento.")
     else:
-        for item in timeline:
-            anexo_html = ""
-            if item.get("Anexo"):
-                anexo_html = f"<br>📎 <b>Anexo Vinculado:</b> <code>{item['Anexo']}</code>"
-
+        for idx_t, item in enumerate(timeline):
             st.markdown(
                 f"""
             <div class="comment-item">
                 <div class="comment-header">👤 {item['Nome']} ({item['Usuario']}) - 📅 {item['Data']}</div>
-                <div>{item['Texto']} {anexo_html}</div>
+                <div>{item['Texto']}</div>
             </div>
             """,
                 unsafe_allow_html=True,
             )
 
+            # FILTRO 1: EXIBIÇÃO E DOWNLOAD DE ANEXOS DIVERSOS
             if item.get("Anexo"):
-                p_a = os.path.join(PASTA_EVIDENCIAS, item["Anexo"])
-                if os.path.exists(p_a):
-                    if item["Anexo"].lower().endswith(
-                        (".png", ".jpg", ".jpeg")
-                    ):
-                        st.image(p_a, use_container_width=True)
+                renderizar_anexo_elemento(item["Anexo"], key_prefix=f"mdl_{row_item['ID']}_{idx_t}")
 
     st.divider()
     st.markdown("##### ➕ Registrar Novo Comentário + Anexo")
@@ -635,7 +665,6 @@ def modal_detalhes_dialog(id_projeto):
             except Exception as e:
                 st.error(f"Erro ao salvar histórico: {e}")
 
-    # CORREÇÃO 1: EXCLUSÃO COM DOUBLE CONFIRMATION NO MODAL
     st.divider()
     with st.expander("⚠️ Área de Risco: Excluir Apontamento"):
         st.write("Para excluir permanentemente este projeto, confirme abaixo:")
@@ -665,7 +694,6 @@ def modal_detalhes_dialog(id_projeto):
                 st.error(f"Erro ao excluir o projeto: {e}")
 
 
-# GERENCIADOR DE ABERTURA DO MODAL
 if (
     "id_modal_aberto" in st.session_state
     and st.session_state["id_modal_aberto"]
@@ -860,31 +888,32 @@ with tabs[0]:
 
     st.divider()
 
-    # CORREÇÃO 4: MATRIZ COMPLETA COM TODOS OS CASOS
     st.markdown("### 📋 Matriz Geral de Apontamentos (Todos os Registros)")
     st.caption(
         "💡 Selecione uma linha da tabela para abrir os detalhes completos e o histórico no modal."
     )
 
-    cols_exibir_matriz = [
-        "ID",
-        "Cliente_Projeto",
-        "Achado",
-        "Severidade",
-        "Area_Responsavel",
-        "Nome_Responsavel",
-        "Prazo",
-        "Ultima_Acao",
-        "Status",
-    ]
+    df_matriz_exibicao = df_filtrado.copy()
+    if not df_matriz_exibicao.empty:
+        # FORMATANDO DATAS PARA O PADRÃO BRASILEIRO NA MATRIZ
+        df_matriz_exibicao["Data_Inicio"] = df_matriz_exibicao["Data_Inicio"].apply(formatar_data_br)
+        df_matriz_exibicao["Prazo"] = df_matriz_exibicao["Prazo"].apply(formatar_data_br)
 
-    df_matriz_completa = df_filtrado[cols_exibir_matriz]
+        cols_exibir_matriz = [
+            "ID",
+            "Cliente_Projeto",
+            "Achado",
+            "Severidade",
+            "Area_Responsavel",
+            "Nome_Responsavel",
+            "Data_Inicio",
+            "Prazo",
+            "Ultima_Acao",
+            "Status",
+        ]
 
-    if df_matriz_completa.empty:
-        st.info("Nenhum apontamento encontrado para o filtro selecionado.")
-    else:
         event = st.dataframe(
-            df_matriz_completa,
+            df_matriz_exibicao[cols_exibir_matriz],
             use_container_width=True,
             selection_mode="single-row",
             on_select="rerun",
@@ -893,12 +922,12 @@ with tabs[0]:
 
         if event and event.selection and event.selection.rows:
             row_idx = event.selection.rows[0]
-            item_selecionado = df_matriz_completa.iloc[row_idx]
+            item_selecionado = df_matriz_exibicao.iloc[row_idx]
             st.session_state["id_modal_aberto"] = item_selecionado["ID"]
             st.rerun()
 
 # ---------------------------------------------------------
-# TELA 2: OPERAÇÕES E GESTÃO DE PROJETOS (CRUD COM DOUBLE CONFIRMATION)
+# TELA 2: OPERAÇÕES E GESTÃO DE PROJETOS (CRUD)
 # ---------------------------------------------------------
 with tabs[1]:
     st.markdown("### ⚙️ Gestão de Projetos e Apontamentos")
@@ -931,8 +960,8 @@ with tabs[1]:
 
             c_i6, c_i7, c_i8 = st.columns(3)
             inc_email = c_i6.text_input("E-mail do Responsável:")
-            inc_dt_inicio = c_i7.date_input("Data de Início:")
-            inc_prazo = c_i8.date_input("Prazo Limite:")
+            inc_dt_inicio = c_i7.date_input("Data de Início:", format="DD/MM/YYYY")
+            inc_prazo = c_i8.date_input("Prazo Limite:", format="DD/MM/YYYY")
 
             if st.form_submit_button("➕ Criar Registro"):
                 try:
@@ -956,7 +985,7 @@ with tabs[1]:
                                 "Data_Conclusao": "-",
                                 "Status": "A Fazer",
                                 "Timeline_JSON": "[]",
-                                "Ultima_Acao": str(inc_dt_inicio),
+                                "Ultima_Acao": formatar_data_br(inc_dt_inicio),
                             }
                         ]
                     )
@@ -997,10 +1026,10 @@ with tabs[1]:
                     "Responsável:", value=row_ed["Nome_Responsavel"]
                 )
                 ed_dt_inicio = c_e2.text_input(
-                    "Data Início:", value=str(row_ed.get("Data_Inicio", "-"))
+                    "Data Início (YYYY-MM-DD):", value=str(row_ed.get("Data_Inicio", "-"))
                 )
                 ed_prazo = c_e3.text_input(
-                    "Novo Prazo:", value=str(row_ed["Prazo"])
+                    "Novo Prazo (YYYY-MM-DD):", value=str(row_ed["Prazo"])
                 )
 
                 ed_status = st.selectbox(
@@ -1054,7 +1083,6 @@ with tabs[1]:
                     except Exception as e:
                         st.error(f"Erro ao salvar edição: {e}")
 
-    # CORREÇÃO 1: EXCLUSÃO COM DOUBLE CONFIRMATION NA ABA DE GESTÃO
     with sub_t3:
         if not df.empty:
             st.warning("⚠️ Atenção: A exclusão de um projeto é irreversível.")
@@ -1098,7 +1126,6 @@ with tabs[1]:
 with tabs[2]:
     st.markdown("### 📌 Quadro Visual de Projetos & Ações")
 
-    # GERENCIAMENTO DE COLUNAS COM CONFIRMAÇÃO DUPLA
     with st.expander("🛠️ Personalizar e Reordenar Colunas do Kanban"):
         c_k1, c_k2, c_k3 = st.columns([1.5, 1, 1.2])
 
@@ -1158,6 +1185,10 @@ with tabs[2]:
             for _, row in itens.iterrows():
                 sev_class = f"card-{str(row['Severidade']).lower()}"
 
+                # FORMATANDO DATAS NO PADRÃO BRASILEIRO NO CARD KANBAN
+                dt_ini_br = formatar_data_br(row.get('Data_Inicio'))
+                dt_prz_br = formatar_data_br(row.get('Prazo'))
+
                 st.markdown(
                     f"""
                 <div class="kanban-box {sev_class}">
@@ -1167,7 +1198,7 @@ with tabs[2]:
                     <div style="font-size: 0.95rem; font-weight: bold; color: #0f172a; margin: 4px 0;">{row['Achado']}</div>
                     <div style="font-size: 0.82rem; color: #475569; margin-bottom: 8px; line-height: 1.3;"><b>Ação:</b> {row['Acao_Corretiva']}</div>
                     <div style="font-size: 0.72rem; color: #64748b; margin-bottom: 8px;">
-                        🛫 <b>Início:</b> {row.get('Data_Inicio', '-')} | 🎯 <b>Prazo:</b> {row.get('Prazo', '-')}
+                        🛫 <b>Início:</b> {dt_ini_br} | 🎯 <b>Prazo:</b> {dt_prz_br}
                     </div>
                     <div>
                         <span class="badge badge-{str(row['Severidade']).lower()}">{row['Severidade']}</span>
@@ -1203,7 +1234,6 @@ with tabs[2]:
                             st.error(f"Erro ao mover o cartão: {e}")
 
                 with c_btn2:
-                    # CORREÇÃO 2: ABERTURA DO MODAL SEM DUPLICAR ELEMENTOS DE DIALOG
                     if st.button("🔍 Detalhes", key=f"btn_pop_{row['ID']}"):
                         st.session_state["id_modal_aberto"] = row["ID"]
                         st.rerun()
@@ -1241,7 +1271,7 @@ with tabs[3]:
         if len(timeline_mestre) == 0:
             st.info("Nenhum histórico registrado para este projeto.")
         else:
-            for t_item in timeline_mestre:
+            for idx_tm, t_item in enumerate(timeline_mestre):
                 st.markdown(
                     f"""
                 <div class="comment-item">
@@ -1252,24 +1282,18 @@ with tabs[3]:
                     unsafe_allow_html=True,
                 )
                 if t_item.get("Anexo"):
-                    p_m = os.path.join(PASTA_EVIDENCIAS, t_item["Anexo"])
-                    if os.path.exists(p_m):
-                        st.write(f"📎 **Anexo Vinculado:** `{t_item['Anexo']}`")
-                        if t_item["Anexo"].lower().endswith(
-                            (".png", ".jpg", ".jpeg")
-                        ):
-                            st.image(p_m, use_container_width=True)
+                    renderizar_anexo_elemento(t_item["Anexo"], key_prefix=f"mst_{row_h['ID']}_{idx_tm}")
 
 # ---------------------------------------------------------
-# TELA 5: EXTRATOR DE RELATÓRIOS
+# TELA 5: EXTRATOR DE RELATÓRIOS (EXCEL MULTI-ABAS CASCATA)
 # ---------------------------------------------------------
 with tabs[4]:
     st.markdown("### 📥 Extrator Inteligente de Relatórios Executivos")
     st.caption(
-        "Filtre os dados por emissão ou conclusão e visualize a cascata auditável completa de apontamentos e ações."
+        "Filtre os dados por emissão ou conclusão e exporte o relatório em formato Excel (.xlsx) com a visão em cascata e detalhes completos."
     )
 
-    f_c1, f_c2, f_c3 = st.columns(3)
+    f_c1, f_c2, f_c3, f_c4 = st.columns(4)
 
     proj_filtro_rel = f_c1.selectbox(
         "Filtrar por Projeto:",
@@ -1277,16 +1301,11 @@ with tabs[4]:
         key="f_rel_proj",
     )
 
-    range_emissao = f_c2.date_input(
-        "Período de Emissão (Início):",
-        value=(datetime.date(2026, 1, 1), datetime.date(2026, 12, 31)),
-        key="f_rel_emissao",
+    dt_ini_rel_e = f_c2.date_input(
+        "Emissão (De):", value=datetime.date(2026, 1, 1), format="DD/MM/YYYY", key="f_rel_e_de"
     )
-
-    range_conclusao = f_c3.date_input(
-        "Período de Conclusão:",
-        value=(datetime.date(2026, 1, 1), datetime.date(2026, 12, 31)),
-        key="f_rel_conclusao",
+    dt_fim_rel_e = f_c3.date_input(
+        "Emissão (Até):", value=datetime.date(2026, 12, 31), format="DD/MM/YYYY", key="f_rel_e_ate"
     )
 
     df_rel = df.copy()
@@ -1294,28 +1313,85 @@ with tabs[4]:
     if proj_filtro_rel != "Todos os Projetos":
         df_rel = df_rel[df_rel["Cliente_Projeto"] == proj_filtro_rel]
 
-    if isinstance(range_emissao, tuple) and len(range_emissao) == 2:
-        dt_ini_e, dt_fim_e = range_emissao
-        df_rel["dt_tmp_emissao"] = pd.to_datetime(
+    if dt_ini_rel_e and dt_fim_rel_e:
+        df_rel["dt_tmp_e"] = pd.to_datetime(
             df_rel["Data_Inicio"], errors="coerce"
         ).dt.date
         df_rel = df_rel[
-            (df_rel["dt_tmp_emissao"] >= dt_ini_e)
-            & (df_rel["dt_tmp_emissao"] <= dt_fim_e)
+            (df_rel["dt_tmp_e"] >= dt_ini_rel_e)
+            & (df_rel["dt_tmp_e"] <= dt_fim_rel_e)
         ]
 
     st.divider()
 
+    # FILTRO 4: GERADOR DE EXCEL MULTI-ABAS (CASCATA DRE + BASE DADOS)
+    def gerar_excel_relatorio_cascata(df_export):
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            # 1. ABA DE BASE DE DADOS COMPLETA
+            df_base_exp = df_export.copy()
+            df_base_exp["Data_Inicio"] = df_base_exp["Data_Inicio"].apply(formatar_data_br)
+            df_base_exp["Prazo"] = df_base_exp["Prazo"].apply(formatar_data_br)
+            df_base_exp["Data_Conclusao"] = df_base_exp["Data_Conclusao"].apply(formatar_data_br)
+
+            cols_limpas = [c for c in df_base_exp.columns if not c.startswith("dt_tmp")]
+            df_base_exp[cols_limpas].to_excel(writer, sheet_name="Base_Dados_Completa", index=False)
+
+            # 2. ABA VISÃO CASCATA ESTRUTURADA
+            linhas_cascata = []
+            for _, r in df_export.iterrows():
+                # Linha Cabeçalho do Projeto
+                linhas_cascata.append({
+                    "Nivel": "PROJETO",
+                    "ID": r["ID"],
+                    "Cliente_Projeto": r["Cliente_Projeto"],
+                    "Status": r["Status"],
+                    "Severidade": r["Severidade"],
+                    "Achado_Ou_Comentario": r["Achado"],
+                    "Acao_Ou_Usuario": r["Acao_Corretiva"],
+                    "Responsavel": r["Nome_Responsavel"],
+                    "Data_Inicio": formatar_data_br(r["Data_Inicio"]),
+                    "Prazo": formatar_data_br(r["Prazo"]),
+                    "Anexo_Evidencia": "-",
+                })
+
+                # Linhas filhas (Histórico/Timeline)
+                try:
+                    hist_l = json.loads(str(r.get("Timeline_JSON", "[]")))
+                except:
+                    hist_l = []
+
+                for h in hist_l:
+                    linhas_cascata.append({
+                        "Nivel": "   └─ AÇÃO/HISTÓRICO",
+                        "ID": r["ID"],
+                        "Cliente_Projeto": r["Cliente_Projeto"],
+                        "Status": r["Status"],
+                        "Severidade": "-",
+                        "Achado_Ou_Comentario": f"Texto: {h.get('Texto', '')}",
+                        "Acao_Ou_Usuario": f"Por: {h.get('Nome', '')} ({h.get('Usuario', '')})",
+                        "Responsavel": "-",
+                        "Data_Inicio": h.get("Data", ""),
+                        "Prazo": "-",
+                        "Anexo_Evidencia": h.get("Anexo") if h.get("Anexo") else "Sem anexo",
+                    })
+
+            df_cascata_excel = pd.DataFrame(linhas_cascata)
+            df_cascata_excel.to_excel(writer, sheet_name="Visao_Cascata_Executiva", index=False)
+
+        output.seek(0)
+        return output
+
     try:
-        csv_data = df_rel.to_csv(index=False, sep=";").encode("utf-8-sig")
+        excel_bytes = gerar_excel_relatorio_cascata(df_rel)
         st.download_button(
-            label="📥 Download Planilha Completa para Excel (CSV)",
-            data=csv_data,
-            file_name=f"Relatorio_Executivo_Compliance_{datetime.date.today()}.csv",
-            mime="text/csv",
+            label="📥 Download Relatório Profissional em Excel (.xlsx)",
+            data=excel_bytes,
+            file_name=f"Relatorio_Executivo_Compliance_{datetime.date.today().strftime('%d_%m_%Y')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
     except Exception as e:
-        st.error(f"Erro ao gerar download do relatório: {e}")
+        st.error(f"Erro ao gerar planilha Excel: {e}")
 
     st.divider()
 
@@ -1324,7 +1400,7 @@ with tabs[4]:
     if df_rel.empty:
         st.info("Nenhum registro encontrado para os filtros selecionados.")
     else:
-        for idx, row_r in df_rel.iterrows():
+        for idx_r, row_r in df_rel.iterrows():
             with st.container():
                 st.markdown(
                     f"""
@@ -1336,7 +1412,7 @@ with tabs[4]:
                     <div style="font-size: 0.9rem; margin-bottom: 6px;"><b>Achado:</b> {row_r['Achado']}</div>
                     <div style="font-size: 0.9rem; margin-bottom: 6px;"><b>Ação Recomendada:</b> {row_r['Acao_Corretiva']}</div>
                     <div style="font-size: 0.82rem; color: #475569; margin-bottom: 10px;">
-                        👤 <b>Responsável:</b> {row_r['Nome_Responsavel']} | 🏢 <b>Área:</b> {row_r['Area_Responsavel']} | 🎯 <b>Prazo:</b> {row_r['Prazo']} | ⏱️ <b>Última Ação:</b> {row_r.get('Ultima_Acao', '-')}
+                        👤 <b>Responsável:</b> {row_r['Nome_Responsavel']} | 🏢 <b>Área:</b> {row_r['Area_Responsavel']} | 🛫 <b>Início:</b> {formatar_data_br(row_r.get('Data_Inicio'))} | 🎯 <b>Prazo:</b> {formatar_data_br(row_r.get('Prazo'))} | ⏱️ <b>Última Ação:</b> {row_r.get('Ultima_Acao', '-')}
                     </div>
                 """,
                     unsafe_allow_html=True,
@@ -1351,15 +1427,12 @@ with tabs[4]:
 
                 if hist_items:
                     st.markdown("**📜 Histórico de Ações & Evidências Registradas:**")
-                    for h in hist_items:
-                        anx_str = (
-                            f" | 📎 Anexo: `{h['Anexo']}`"
-                            if h.get("Anexo")
-                            else ""
-                        )
+                    for idx_h, h in enumerate(hist_items):
                         st.markdown(
-                            f"   * ➔ **[{h['Data']}] {h['Nome']}:** {h['Texto']}{anx_str}"
+                            f"   * ➔ **[{h['Data']}] {h['Nome']}:** {h['Texto']}"
                         )
+                        if h.get("Anexo"):
+                            renderizar_anexo_elemento(h["Anexo"], key_prefix=f"casc_{row_r['ID']}_{idx_h}")
                 else:
                     st.caption("   * ➔ Nenhum histórico registrado até o momento.")
 
