@@ -33,15 +33,20 @@ st.markdown(
     .kpi-value { font-size: 1.8rem; font-weight: 800; color: #0f172a; margin-top: 4px; }
     .kpi-subtext { font-size: 0.75rem; color: #10b981; font-weight: 600; margin-top: 2px; }
 
-    /* Estilo de Cartões Kanban */
+    /* Estilização Refinada dos Cartões Kanban com Separação Nítida */
     .kanban-box {
         background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 8px;
-        padding: 14px;
-        margin-bottom: 12px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-        border-top: 4px solid #cbd5e1;
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 18px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+        border-top: 5px solid #cbd5e1;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .kanban-box:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08);
     }
     .card-critica { border-top-color: #ef4444 !important; }
     .card-alta { border-top-color: #f97316 !important; }
@@ -50,22 +55,46 @@ st.markdown(
 
     /* Badges */
     .badge {
-        font-size: 0.70rem; font-weight: 700; padding: 2px 8px;
-        border-radius: 10px; color: white; display: inline-block; text-transform: uppercase;
+        font-size: 0.70rem; font-weight: 700; padding: 3px 10px;
+        border-radius: 12px; color: white; display: inline-block; text-transform: uppercase;
     }
     .badge-critica { background-color: #ef4444; }
     .badge-alta { background-color: #f97316; }
     .badge-media { background-color: #eab308; }
     .badge-baixa { background-color: #22c55e; }
 
+    /* Timeline de Comentários no Relatório e Modal */
     .comment-item {
         background-color: #f8fafc;
         border: 1px solid #e2e8f0;
         border-left: 4px solid #3b82f6;
-        padding: 10px 12px;
-        margin-bottom: 8px;
-        border-radius: 6px;
-        font-size: 0.85rem;
+        padding: 12px 14px;
+        margin-bottom: 10px;
+        border-radius: 8px;
+        font-size: 0.88rem;
+    }
+    .comment-header {
+        font-weight: 700;
+        color: #1e293b;
+        font-size: 0.78rem;
+        margin-bottom: 4px;
+    }
+    
+    /* Visão Relatório Tipo Cascata / DRE */
+    .dre-card {
+        background-color: #ffffff;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+    .dre-header {
+        font-size: 1.1rem;
+        font-weight: bold;
+        color: #1e3a8a;
+        border-bottom: 2px solid #e2e8f0;
+        padding-bottom: 6px;
+        margin-bottom: 12px;
     }
 </style>
 """,
@@ -81,7 +110,7 @@ if not os.path.exists(PASTA_EVIDENCIAS):
     os.makedirs(PASTA_EVIDENCIAS)
 
 
-# 2. LOGS E USUÁRIOS
+# 2. HELPER FUNCTIONS: LOGS E USUÁRIOS
 def registrar_log(usuario, acao, detalhe):
     try:
         data_hora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -111,7 +140,6 @@ def carregar_usuarios():
     try:
         if os.path.exists(ARQUIVO_USUARIOS):
             df_u = pd.read_excel(ARQUIVO_USUARIOS, dtype=str)
-            # Garante que todas as colunas sejam estritamente tratadas como string/texto
             for col in ["Usuario", "Senha", "Nome", "Nivel", "Status"]:
                 if col in df_u.columns:
                     df_u[col] = df_u[col].fillna("").astype(str)
@@ -148,7 +176,6 @@ def carregar_usuarios():
 
 def salvar_usuarios(df_u):
     try:
-        # Garante a conversão para string em todo o DataFrame antes de salvar em disco
         df_salvar = df_u.copy()
         for col in df_salvar.columns:
             df_salvar[col] = df_salvar[col].astype(str)
@@ -157,7 +184,23 @@ def salvar_usuarios(df_u):
         st.error(f"Erro ao salvar arquivo de usuários: {e}")
 
 
-# 3. BASE DE DADOS
+# 3. BASE DE DADOS E EXTRAÇÃO DE ÚLTIMA AÇÃO
+def extrair_data_ultima_acao(json_str, data_inicio_fallback):
+    try:
+        timeline = json.loads(str(json_str))
+        if timeline and len(timeline) > 0:
+            datas = [
+                item.get("Data", "")
+                for item in timeline
+                if item.get("Data", "")
+            ]
+            if datas:
+                return datas[-1]
+    except:
+        pass
+    return str(data_inicio_fallback)
+
+
 def carregar_dados():
     try:
         if os.path.exists(ARQUIVO_MATRIZ):
@@ -271,6 +314,15 @@ def carregar_dados():
                 df_base[col] = default_val
 
         df_base["Status"] = df_base["Status"].replace({"Congos": "Concluído"})
+
+        # Calcula Dinamicamente a Data da Última Ação Registrada
+        df_base["Ultima_Acao"] = df_base.apply(
+            lambda r: extrair_data_ultima_acao(
+                r.get("Timeline_JSON", "[]"), r.get("Data_Inicio", "-")
+            ),
+            axis=1,
+        )
+
         return df_base
     except Exception as e:
         st.error(f"Erro ao carregar matriz de auditoria: {e}")
@@ -279,6 +331,14 @@ def carregar_dados():
 
 def salvar_dados(dataframe):
     try:
+        # Recalcula Última Ação antes de salvar
+        if "Timeline_JSON" in dataframe.columns:
+            dataframe["Ultima_Acao"] = dataframe.apply(
+                lambda r: extrair_data_ultima_acao(
+                    r.get("Timeline_JSON", "[]"), r.get("Data_Inicio", "-")
+                ),
+                axis=1,
+            )
         dataframe.to_excel(ARQUIVO_MATRIZ, index=False)
     except Exception as e:
         st.error(f"Erro ao salvar alterações da matriz: {e}")
@@ -364,7 +424,7 @@ is_master = user_info["Nivel"] == "Master"
 st.sidebar.markdown(f"**Usuário:** {user_info['Nome']}")
 st.sidebar.markdown(f"**Nível:** `{user_info['Nivel']}`")
 
-# BLOCO DE TROCA DE SENHA SEGURO E ANTI-QUEBRA
+# TROCA DE SENHA SEGURA
 with st.sidebar.popover("🔑 Trocar Minha Senha"):
     st.write("### Alterar Senha")
     senha_atual = st.text_input("Senha Atual:", type="password")
@@ -375,10 +435,7 @@ with st.sidebar.popover("🔑 Trocar Minha Senha"):
             st.warning("Por favor, preencha a senha atual e a nova senha.")
         else:
             try:
-                # Recarrega a base garantindo que todas as colunas sejam texto puro
                 df_u = carregar_usuarios()
-
-                # Busca pelo usuário atual de forma resiliente
                 usuario_alvo = str(user_info["Usuario"]).strip()
                 mask = df_u["Usuario"].astype(str).str.strip() == usuario_alvo
 
@@ -389,15 +446,12 @@ with st.sidebar.popover("🔑 Trocar Minha Senha"):
                     senha_armazenada = str(df_u.loc[idx_u, "Senha"]).strip()
 
                     if senha_armazenada == str(senha_atual).strip():
-                        # Cria uma cópia com a coluna convertida para tipo Objeto/String geral
-                        # Isso previne erros de tipagem estrita no Pandas
                         novas_senhas = list(df_u["Senha"].astype(str))
                         novas_senhas[idx_u] = str(nova_senha).strip()
 
                         df_u["Senha"] = novas_senhas
                         salvar_usuarios(df_u)
 
-                        # Atualiza também o estado da sessão atual
                         st.session_state["usuario_logado"]["Senha"] = str(
                             nova_senha
                         ).strip()
@@ -424,7 +478,7 @@ if "df_auditoria" not in st.session_state:
 
 df = st.session_state["df_auditoria"]
 
-# Colunas do Kanban
+# Colunas do Kanban Personalizáveis
 if "colunas_kanban_custom" not in st.session_state:
     st.session_state["colunas_kanban_custom"] = [
         "A Fazer / Atrasado",
@@ -448,6 +502,7 @@ if projeto_selecionado != "Todos os Projetos":
 else:
     df_filtrado = df.copy()
 
+# Estruturação de Abas
 abas = [
     "📊 Painel Executivo (BI & Governança)",
     "⚙️ Operações e Gestão de Projetos (CRUD)",
@@ -455,10 +510,124 @@ abas = [
     "📤 Mestre Central de Anexos e Histórico",
     "📥 Extrator de Relatórios",
 ]
+
 if is_master:
     abas.append("🛡️ Auditoria do Sistema e Acessos")
 
 tabs = st.tabs(abas)
+
+
+# ---------------------------------------------------------
+# DIALOG NATIVO COMPACTO E AMPLO (POPUP MODAL MODERNO)
+# ---------------------------------------------------------
+@st.dialog("📋 Detalhes & Rastreabilidade do Apontamento", width="large")
+def exibir_modal_detalhes_projeto(row_item):
+    st.markdown(f"### Projeto: {row_item['Cliente_Projeto']}")
+    c_m1, c_m2, c_m3 = st.columns(3)
+    c_m1.write(f"**ID:** #{row_item['ID']}")
+    c_m2.write(f"**Responsável:** {row_item['Nome_Responsavel']}")
+    c_m3.write(f"**Área:** {row_item['Area_Responsavel']}")
+
+    st.markdown(f"**Achado Mapeado:** {row_item['Achado']}")
+    st.markdown(f"**Ação Corretiva:** {row_item['Acao_Corretiva']}")
+    st.info(
+        f"🛫 **Data Início:** {row_item.get('Data_Inicio', '-')} | 🎯 **Prazo:** {row_item.get('Prazo', '-')} | ⏱️ **Última Ação:** {row_item.get('Ultima_Acao', '-')}"
+    )
+
+    st.divider()
+    st.markdown("##### 💬 Linha do Tempo & Histórico Registrado")
+
+    try:
+        timeline = json.loads(str(row_item.get("Timeline_JSON", "[]")))
+    except:
+        timeline = []
+
+    if not timeline:
+        st.caption("Nenhum comentário ou evidência anexada até o momento.")
+    else:
+        for item in timeline:
+            anexo_html = ""
+            if item.get("Anexo"):
+                anexo_html = f"<br>📎 <b>Anexo Vinculado:</b> <code>{item['Anexo']}</code>"
+
+            st.markdown(
+                f"""
+            <div class="comment-item">
+                <div class="comment-header">👤 {item['Nome']} ({item['Usuario']}) - 📅 {item['Data']}</div>
+                <div>{item['Texto']} {anexo_html}</div>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+            if item.get("Anexo"):
+                p_a = os.path.join(PASTA_EVIDENCIAS, item["Anexo"])
+                if os.path.exists(p_a):
+                    if item["Anexo"].lower().endswith(
+                        (".png", ".jpg", ".jpeg")
+                    ):
+                        st.image(p_a, use_container_width=True)
+
+    st.divider()
+    st.markdown("##### ➕ Registrar Novo Comentário + Anexo")
+
+    c_f1, c_f2 = st.columns([2, 1])
+    txt_coment = c_f1.text_area(
+        "Comentário sobre a evolução:", key=f"dlg_txt_{row_item['ID']}"
+    )
+    file_coment = c_f2.file_uploader(
+        "Upload de Evidência:", key=f"dlg_file_{row_item['ID']}"
+    )
+
+    c_s1, c_s2 = st.columns([1, 1])
+    if c_s1.button("💾 Salvar Histórico", key=f"dlg_save_{row_item['ID']}"):
+        if txt_coment or file_coment:
+            try:
+                nome_anexo = None
+                if file_coment is not None:
+                    nome_anexo = f"{row_item['ID']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{file_coment.name}"
+                    caminho = os.path.join(PASTA_EVIDENCIAS, nome_anexo)
+                    with open(caminho, "wb") as f:
+                        f.write(file_coment.getbuffer())
+
+                novo_item = {
+                    "Data": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
+                    "Nome": user_info["Nome"],
+                    "Usuario": user_info["Usuario"],
+                    "Texto": txt_coment,
+                    "Anexo": nome_anexo,
+                }
+                timeline.append(novo_item)
+
+                idx_k = df[df["ID"] == row_item["ID"]].index[0]
+                df.loc[idx_k, "Timeline_JSON"] = json.dumps(
+                    timeline, ensure_ascii=False
+                )
+                salvar_dados(df)
+                st.session_state["df_auditoria"] = df
+                st.success("Histórico atualizado com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao salvar histórico: {e}")
+
+    # ITEM 3: EXCLUSÃO DE PROJETOS DENTRO DO MODAL
+    if c_s2.button(
+        "🗑️ Excluir Este Projeto",
+        key=f"dlg_del_{row_item['ID']}",
+        type="primary",
+    ):
+        try:
+            df_novo = df[df["ID"] != row_item["ID"]].copy()
+            salvar_dados(df_novo)
+            st.session_state["df_auditoria"] = df_novo
+            registrar_log(
+                user_info["Usuario"], "Exclusão", f"Excluiu ID {row_item['ID']}"
+            )
+            st.success("Projeto excluído com sucesso!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Erro ao excluir projeto: {e}")
+
 
 # ---------------------------------------------------------
 # TELA 1: PAINEL EXECUTIVO COMPLETO
@@ -637,39 +806,60 @@ with tabs[0]:
 
     st.divider()
 
-    st.markdown("### ⚠️ Matriz de Riscos Críticos e Ações em Atraso")
+    # ITEM 6: MATRIZ COM DATA DA ÚLTIMA AÇÃO E NAVEGAÇÃO RÁPIDA POR CLIQUE
+    st.markdown(
+        "### ⚠️ Matriz de Riscos Críticos e Ações em Atraso (Clique para Detalhar)"
+    )
+    st.caption(
+        "💡 Selecione uma linha da tabela para abrir os detalhes completos e o histórico do projeto na hora."
+    )
+
+    cols_exibir_matriz = [
+        "ID",
+        "Cliente_Projeto",
+        "Achado",
+        "Severidade",
+        "Area_Responsavel",
+        "Nome_Responsavel",
+        "Prazo",
+        "Ultima_Acao",
+        "Status",
+    ]
     df_urgente = df_filtrado[
         (df_filtrado["Severidade"].isin(["Crítica", "Alta"]))
         | (df_filtrado["Status"] == "Atrasado")
-    ]
+    ][cols_exibir_matriz]
 
     if len(df_urgente) == 0:
         st.success("🎉 Nenhuma ação urgente ou atrasada no momento!")
     else:
-        st.dataframe(
-            df_urgente[
-                [
-                    "ID",
-                    "Cliente_Projeto",
-                    "Achado",
-                    "Severidade",
-                    "Area_Responsavel",
-                    "Nome_Responsavel",
-                    "Prazo",
-                    "Status",
-                ]
-            ],
+        # Tabela com Seleção Interativa por Clique
+        event = st.dataframe(
+            df_urgente,
             use_container_width=True,
+            selection_mode="single-row",
+            on_select="rerun",
         )
 
+        # Se o usuário clicar em uma linha, abre o modal na hora
+        if event and event.selection and event.selection.rows:
+            row_idx = event.selection.rows[0]
+            item_selecionado = df_urgente.iloc[row_idx]
+            row_completa = df[df["ID"] == item_selecionado["ID"]].iloc[0]
+            exibir_modal_detalhes_projeto(row_completa)
+
 # ---------------------------------------------------------
-# TELA 2: OPERAÇÕES E GESTÃO DE PROJETOS (CRUD)
+# TELA 2: OPERAÇÕES E GESTÃO DE PROJETOS (CRUD + EXCLUSÃO)
 # ---------------------------------------------------------
 with tabs[1]:
     st.markdown("### ⚙️ Gestão de Projetos e Apontamentos")
 
-    sub_t1, sub_t2 = st.tabs(
-        ["➕ Incluir Novo Projeto / Achado", "✏️ Editar Projeto Existente"]
+    sub_t1, sub_t2, sub_t3 = st.tabs(
+        [
+            "➕ Incluir Novo Projeto / Achado",
+            "✏️ Editar Projeto Existente",
+            "🗑️ Excluir Projeto",
+        ]
     )
 
     with sub_t1:
@@ -717,6 +907,7 @@ with tabs[1]:
                                 "Data_Conclusao": "-",
                                 "Status": "A Fazer",
                                 "Timeline_JSON": "[]",
+                                "Ultima_Acao": str(inc_dt_inicio),
                             }
                         ]
                     )
@@ -736,6 +927,7 @@ with tabs[1]:
             proj_sel_ed = st.selectbox(
                 "Selecione o Projeto / Cliente:",
                 options=df["Cliente_Projeto"].unique(),
+                key="sb_ed_proj",
             )
             df_sub_ed = df[df["Cliente_Projeto"] == proj_sel_ed]
 
@@ -813,27 +1005,72 @@ with tabs[1]:
                     except Exception as e:
                         st.error(f"Erro ao salvar edição: {e}")
 
+    # ITEM 3: ABA DEDICADA DE EXCLUSÃO DE PROJETOS
+    with sub_t3:
+        if not df.empty:
+            st.warning("⚠️ Atenção: A exclusão de um projeto é irreversível.")
+            proj_sel_del = st.selectbox(
+                "Selecione o Projeto para Excluir:",
+                options=df["Cliente_Projeto"].unique(),
+                key="sb_del_proj",
+            )
+            df_sub_del = df[df["Cliente_Projeto"] == proj_sel_del]
+            id_del = st.selectbox(
+                "ID do Apontamento:",
+                options=df_sub_del["ID"].unique(),
+                key="sb_del_id",
+            )
+
+            if st.button("🗑️ Confirmar Exclusão do Apontamento", type="primary"):
+                try:
+                    df_novo = df[df["ID"] != id_del].copy()
+                    salvar_dados(df_novo)
+                    st.session_state["df_auditoria"] = df_novo
+                    registrar_log(
+                        user_info["Usuario"], "Exclusão", f"Excluiu ID {id_del}"
+                    )
+                    st.success(f"Apontamento {id_del} excluído com sucesso!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao excluir o projeto: {e}")
+
 # ---------------------------------------------------------
-# TELA 3: CENTRAL DE PROJETOS (KANBAN OTIMIZADO)
+# TELA 3: CENTRAL DE PROJETOS (KANBAN COM POSICIONAMENTO E SEPARAÇÃO)
 # ---------------------------------------------------------
 with tabs[2]:
     st.markdown("### 📌 Quadro Visual de Projetos & Ações")
 
-    with st.expander("🛠️ Personalizar Colunas do Kanban"):
-        c_k1, c_k2 = st.columns(2)
-        nova_col_k = c_k1.text_input("Nova Coluna:")
-        if c_k1.button("➕ Criar Coluna"):
+    # ITEM 1: LIBERDADE DE ESCOLHER A POSIÇÃO DAS COLUNAS
+    with st.expander("🛠️ Personalizar e Reordenar Colunas do Kanban"):
+        c_k1, c_k2, c_k3 = st.columns([1.5, 1, 1.2])
+
+        nova_col_k = c_k1.text_input("Nome da Nova Coluna:")
+        posicao_k = c_k2.number_input(
+            "Posição (1 a N):",
+            min_value=1,
+            max_value=len(st.session_state["colunas_kanban_custom"]) + 1,
+            value=len(st.session_state["colunas_kanban_custom"]) + 1,
+        )
+
+        if c_k3.button("➕ Criar na Posição Escolhida"):
             if (
                 nova_col_k
                 and nova_col_k not in st.session_state["colunas_kanban_custom"]
             ):
-                st.session_state["colunas_kanban_custom"].append(nova_col_k)
+                idx_pos = int(posicao_k) - 1
+                st.session_state["colunas_kanban_custom"].insert(
+                    idx_pos, nova_col_k
+                )
                 st.rerun()
 
-        col_del_k = c_k2.selectbox(
-            "Excluir Coluna:", options=st.session_state["colunas_kanban_custom"]
+        st.divider()
+        c_r1, c_r2 = st.columns(2)
+        col_del_k = c_r1.selectbox(
+            "Excluir Coluna:",
+            options=st.session_state["colunas_kanban_custom"],
+            key="sb_del_col",
         )
-        if c_k2.button("❌ Remover Coluna"):
+        if c_r2.button("❌ Remover Coluna"):
             if len(st.session_state["colunas_kanban_custom"]) > 1:
                 st.session_state["colunas_kanban_custom"].remove(col_del_k)
                 st.rerun()
@@ -852,6 +1089,7 @@ with tabs[2]:
         else:
             return [col_nome]
 
+    # ITEM 2: SEPARAÇÃO NITIDA E ESTILIZADA ENTRE OS CARDS
     for index, col_nome in enumerate(st.session_state["colunas_kanban_custom"]):
         with cols_st[index]:
             st.markdown(f"#### 📌 {col_nome}")
@@ -861,18 +1099,21 @@ with tabs[2]:
             for _, row in itens.iterrows():
                 sev_class = f"card-{str(row['Severidade']).lower()}"
 
+                # Card com Estilo Separador Refinado
                 st.markdown(
                     f"""
                 <div class="kanban-box {sev_class}">
-                    <div style="font-size: 0.75rem; color: #64748b; font-weight: bold; text-transform: uppercase;">{row['Cliente_Projeto']}</div>
+                    <div style="font-size: 0.75rem; color: #0284c7; font-weight: bold; text-transform: uppercase; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; margin-bottom: 6px;">
+                        🏢 {row['Cliente_Projeto']}
+                    </div>
                     <div style="font-size: 0.95rem; font-weight: bold; color: #0f172a; margin: 4px 0;">{row['Achado']}</div>
-                    <div style="font-size: 0.8rem; color: #475569; margin-bottom: 8px;"><b>Ação:</b> {row['Acao_Corretiva']}</div>
+                    <div style="font-size: 0.82rem; color: #475569; margin-bottom: 8px; line-height: 1.3;"><b>Ação:</b> {row['Acao_Corretiva']}</div>
                     <div style="font-size: 0.72rem; color: #64748b; margin-bottom: 8px;">
                         🛫 <b>Início:</b> {row.get('Data_Inicio', '-')} | 🎯 <b>Prazo:</b> {row.get('Prazo', '-')}
                     </div>
                     <div>
                         <span class="badge badge-{str(row['Severidade']).lower()}">{row['Severidade']}</span>
-                        <span style="font-size: 0.75rem; color: #94a3b8; float: right;">#{row['ID']}</span>
+                        <span style="font-size: 0.75rem; color: #94a3b8; float: right; font-weight: bold;">#{row['ID']}</span>
                     </div>
                 </div>
                 """,
@@ -904,98 +1145,9 @@ with tabs[2]:
                             st.error(f"Erro ao mover o cartão: {e}")
 
                 with c_btn2:
-                    with st.popover("💬 Histórico"):
-                        st.markdown(f"### 📋 Detalhes & Rastreabilidade #{row['ID']}")
-                        st.write(
-                            f"**Projeto:** {row['Cliente_Projeto']} | **Responsável:** {row['Nome_Responsavel']}"
-                        )
-                        st.divider()
-
-                        try:
-                            timeline = json.loads(
-                                str(row.get("Timeline_JSON", "[]"))
-                            )
-                        except:
-                            timeline = []
-
-                        if len(timeline) == 0:
-                            st.caption("Nenhum histórico registrado.")
-                        else:
-                            for item in timeline:
-                                anexo_html = ""
-                                if item.get("Anexo"):
-                                    anexo_html = f"<br>📎 <b>Anexo Vinculado:</b> <code>{item['Anexo']}</code>"
-
-                                st.markdown(
-                                    f"""
-                                <div class="comment-item">
-                                    <div class="comment-header">👤 {item['Nome']} ({item['Usuario']}) - 📅 {item['Data']}</div>
-                                    <div>{item['Texto']} {anexo_html}</div>
-                                </div>
-                                """,
-                                    unsafe_allow_html=True,
-                                )
-
-                                if item.get("Anexo"):
-                                    path_a = os.path.join(
-                                        PASTA_EVIDENCIAS, item["Anexo"]
-                                    )
-                                    if os.path.exists(path_a):
-                                        if item["Anexo"].lower().endswith(
-                                            (".png", ".jpg", ".jpeg")
-                                        ):
-                                            st.image(
-                                                path_a,
-                                                use_container_width=True,
-                                            )
-
-                        st.divider()
-                        st.markdown("##### ➕ Adicionar Novo Comentário + Anexo")
-
-                        txt_coment = st.text_area(
-                            "Comentário:",
-                            key=f"txt_u_{row['ID']}",
-                        )
-                        file_coment = st.file_uploader(
-                            "Anexo (Opcional):", key=f"file_u_{row['ID']}"
-                        )
-
-                        if st.button(
-                            "💾 Registrar",
-                            key=f"btn_save_u_{row['ID']}",
-                        ):
-                            if txt_coment or file_coment:
-                                try:
-                                    nome_anexo_salvo = None
-                                    if file_coment is not None:
-                                        nome_anexo_salvo = f"{row['ID']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{file_coment.name}"
-                                        caminho = os.path.join(
-                                            PASTA_EVIDENCIAS, nome_anexo_salvo
-                                        )
-                                        with open(caminho, "wb") as f:
-                                            f.write(file_coment.getbuffer())
-
-                                    novo_item_timeline = {
-                                        "Data": datetime.datetime.now().strftime(
-                                            "%d/%m/%Y %H:%M"
-                                        ),
-                                        "Nome": user_info["Nome"],
-                                        "Usuario": user_info["Usuario"],
-                                        "Texto": txt_coment,
-                                        "Anexo": nome_anexo_salvo,
-                                    }
-                                    timeline.append(novo_item_timeline)
-
-                                    idx_k = df[df["ID"] == row["ID"]].index[0]
-                                    df.loc[idx_k, "Timeline_JSON"] = json.dumps(
-                                        timeline, ensure_ascii=False
-                                    )
-                                    salvar_dados(df)
-                                    st.session_state["df_auditoria"] = df
-                                    st.success("Registro efetuado!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Erro ao salvar comentário: {e}")
+                    # ITEM 3: CHAMADA DO NOVO MODAL / POPUP AMPLO
+                    if st.button("🔍 Detalhes", key=f"btn_pop_{row['ID']}"):
+                        exibir_modal_detalhes_projeto(row)
 
 # ---------------------------------------------------------
 # TELA 4: MESTRE CENTRAL DE ANEXOS E HISTÓRICO
@@ -1050,20 +1202,115 @@ with tabs[3]:
                             st.image(p_m, use_container_width=True)
 
 # ---------------------------------------------------------
-# TELA 5: EXTRATOR DE RELATÓRIOS
+# TELA 5: EXTRATOR DE RELATÓRIOS (FILTROS DE PERÍODO & VISÃO CASCATA DRE)
 # ---------------------------------------------------------
 with tabs[4]:
     st.markdown("### 📥 Extrator Inteligente de Relatórios Executivos")
+    st.caption(
+        "Filtre os dados por emissão ou conclusão e visualize a cascata auditável completa de apontamentos e ações."
+    )
+
+    # ITENS 4 e 5: FILTROS DE PERÍODO (EMISSÃO E CONCLUSÃO) + PROJETO
+    f_c1, f_c2, f_c3 = st.columns(3)
+
+    proj_filtro_rel = f_c1.selectbox(
+        "Filtrar por Projeto:",
+        options=["Todos os Projetos"] + list(df["Cliente_Projeto"].unique()),
+        key="f_rel_proj",
+    )
+
+    range_emissao = f_c2.date_input(
+        "Período de Emissão (Início):",
+        value=(datetime.date(2026, 1, 1), datetime.date(2026, 12, 31)),
+        key="f_rel_emissao",
+    )
+
+    range_conclusao = f_c3.date_input(
+        "Período de Conclusão:",
+        value=(datetime.date(2026, 1, 1), datetime.date(2026, 12, 31)),
+        key="f_rel_conclusao",
+    )
+
+    # Lógica de Filtragem dos Dados
+    df_rel = df.copy()
+
+    if proj_filtro_rel != "Todos os Projetos":
+        df_rel = df_rel[df_rel["Cliente_Projeto"] == proj_filtro_rel]
+
+    # Filtro Data Emissão
+    if isinstance(range_emissao, tuple) and len(range_emissao) == 2:
+        dt_ini_e, dt_fim_e = range_emissao
+        df_rel["dt_tmp_emissao"] = pd.to_datetime(
+            df_rel["Data_Inicio"], errors="coerce"
+        ).dt.date
+        df_rel = df_rel[
+            (df_rel["dt_tmp_emissao"] >= dt_ini_e)
+            & (df_rel["dt_tmp_emissao"] <= dt_fim_e)
+        ]
+
+    st.divider()
+
+    # DOWNLOAD FORMATADO CSV/EXCEL
     try:
-        csv_data = df_filtrado.to_csv(index=False, sep=";").encode("utf-8-sig")
+        csv_data = df_rel.to_csv(index=False, sep=";").encode("utf-8-sig")
         st.download_button(
-            label="📥 Download Relatório Formatado (CSV / Excel)",
+            label="📥 Download Planilha Completa para Excel (CSV)",
             data=csv_data,
-            file_name=f"Relatorio_Compliance_{datetime.date.today()}.csv",
+            file_name=f"Relatorio_Executivo_Compliance_{datetime.date.today()}.csv",
             mime="text/csv",
         )
     except Exception as e:
-        st.error(f"Erro ao gerar relatório: {e}")
+        st.error(f"Erro ao gerar download do relatório: {e}")
+
+    st.divider()
+
+    # ITEM 5: VISÃO EM CASCATA TIPO DRE (ESTRUTURADA E AUDITÁVEL)
+    st.markdown("### 📊 Visão Auditável em Cascata (DRE de Governança)")
+
+    if df_rel.empty:
+        st.info("Nenhum registro encontrado para os filtros selecionados.")
+    else:
+        for idx, row_r in df_rel.iterrows():
+            with st.container():
+                st.markdown(
+                    f"""
+                <div class="dre-card">
+                    <div class="dre-header">
+                        📌 {row_r['Cliente_Projeto']} — ID: #{row_r['ID']} 
+                        <span style="float: right; font-size: 0.85rem; color: #64748b;">Status: <b>{row_r['Status']}</b></span>
+                    </div>
+                    <div style="font-size: 0.9rem; margin-bottom: 6px;"><b>Achado:</b> {row_r['Achado']}</div>
+                    <div style="font-size: 0.9rem; margin-bottom: 6px;"><b>Ação Recomendada:</b> {row_r['Acao_Corretiva']}</div>
+                    <div style="font-size: 0.82rem; color: #475569; margin-bottom: 10px;">
+                        👤 <b>Responsável:</b> {row_r['Nome_Responsavel']} | 🏢 <b>Área:</b> {row_r['Area_Responsavel']} | 🎯 <b>Prazo:</b> {row_r['Prazo']} | ⏱️ <b>Última Ação:</b> {row_r.get('Ultima_Acao', '-')}
+                    </div>
+                """,
+                    unsafe_allow_html=True,
+                )
+
+                # Histórico em Cascata
+                try:
+                    hist_items = json.loads(
+                        str(row_r.get("Timeline_JSON", "[]"))
+                    )
+                except:
+                    hist_items = []
+
+                if hist_items:
+                    st.markdown("**📜 Histórico de Ações & Evidências Registradas:**")
+                    for h in hist_items:
+                        anx_str = (
+                            f" | 📎 Anexo: `{h['Anexo']}`"
+                            if h.get("Anexo")
+                            else ""
+                        )
+                        st.markdown(
+                            f"   * ➔ **[{h['Data']}] {h['Nome']}:** {h['Texto']}{anx_str}"
+                        )
+                else:
+                    st.caption("   * ➔ Nenhum histórico registrado até o momento.")
+
+                st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------
 # TELA 6: AUDITORIA MASTER
@@ -1078,11 +1325,16 @@ if is_master:
 
         with t_acessos:
             st.subheader("Aprovação e Níveis de Usuários")
-            st.dataframe(df_u, use_container_width=True)
+
+            df_u_exibicao = df_u.copy()
+            if "Senha" in df_u_exibicao.columns:
+                df_u_exibicao["Senha"] = "••••••••"
+
+            st.dataframe(df_u_exibicao, use_container_width=True)
 
             if not df_u.empty:
                 usr_aprovar = st.selectbox(
-                    "Selecione Usuário para Editar:",
+                    "Selecione Usuário para Editar Permissões / Status:",
                     options=df_u["Usuario"].unique(),
                 )
                 c_st, c_nv = st.columns(2)
@@ -1097,6 +1349,11 @@ if is_master:
                         df_u.loc[idx_u, "Status"] = novo_st_u
                         df_u.loc[idx_u, "Nivel"] = novo_nv_u
                         salvar_usuarios(df_u)
+                        registrar_log(
+                            user_info["Usuario"],
+                            "Gestão Acessos",
+                            f"Alterou {usr_aprovar} para {novo_st_u}/{novo_nv_u}",
+                        )
                         st.success("Permissões atualizadas!")
                         st.rerun()
                     except Exception as e:
