@@ -79,6 +79,16 @@ st.markdown(
         font-size: 0.80rem;
         margin-bottom: 4px;
     }
+
+    /* Card de Anexo para a Mestre Central */
+    .file-card {
+        background-color: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 14px;
+        margin-bottom: 12px;
+        border-left: 4px solid #10b981;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -93,7 +103,7 @@ if not os.path.exists(PASTA_EVIDENCIAS):
     os.makedirs(PASTA_EVIDENCIAS)
 
 
-# 2. HELPER FUNCTIONS: CONVERSÃO DE DATAS BRASIL
+# 2. HELPER FUNCTIONS
 def formatar_data_br(val_data):
     if not val_data or str(val_data).strip() in ["-", "", "nan", "None"]:
         return "-"
@@ -552,139 +562,128 @@ if is_master:
 
 tabs = st.tabs(abas)
 
-
 # ---------------------------------------------------------
-# MODAL / DIALOG DE DETALHES (CORREÇÃO DO FECHAMENTO PELO X NATIVO)
+# RENDERIZAÇÃO DO POPUP / MODAL (SOLUÇÃO DE FECHAMENTO GARANTIDO SEM CONFLITOS)
 # ---------------------------------------------------------
-def ao_fechar_modal():
-    st.session_state["id_modal_aberto"] = None
-
-
-@st.dialog("📋 Detalhes & Rastreabilidade do Apontamento", width="large")
-def modal_detalhes_dialog(id_projeto):
-    match_row = df[df["ID"] == id_projeto]
-    if match_row.empty:
-        st.error("Projeto não encontrado.")
-        st.session_state["id_modal_aberto"] = None
-        return
-
-    row_item = match_row.iloc[0]
-
-    st.markdown(f"### Projeto: {row_item['Cliente_Projeto']}")
-
-    c_m1, c_m2, c_m3 = st.columns(3)
-    c_m1.write(f"**ID:** #{row_item['ID']}")
-    c_m2.write(f"**Responsável:** {row_item['Nome_Responsavel']}")
-    c_m3.write(f"**Área:** {row_item['Area_Responsavel']}")
-
-    st.markdown(f"**Achado Mapeado:** {row_item['Achado']}")
-    st.markdown(f"**Ação Corretiva:** {row_item['Acao_Corretiva']}")
-    st.info(
-        f"🛫 **Data Início:** {formatar_data_br(row_item.get('Data_Inicio'))} | 🎯 **Prazo:** {formatar_data_br(row_item.get('Prazo'))} | ⏱️ **Última Ação:** {row_item.get('Ultima_Acao', '-')}"
-    )
-
-    st.divider()
-    st.markdown("##### 💬 Linha do Tempo & Histórico Registrado")
-
-    try:
-        timeline = json.loads(str(row_item.get("Timeline_JSON", "[]")))
-    except:
-        timeline = []
-
-    if not timeline:
-        st.caption("Nenhum comentário ou evidência anexada até o momento.")
-    else:
-        for idx_t, item in enumerate(timeline):
-            st.markdown(
-                f"""
-            <div class="comment-item">
-                <div class="comment-header">👤 {item['Nome']} ({item['Usuario']}) - 📅 {item['Data']}</div>
-                <div>{item['Texto']}</div>
-            </div>
-            """,
-                unsafe_allow_html=True,
-            )
-
-            if item.get("Anexo"):
-                renderizar_anexo_elemento(item["Anexo"], key_prefix=f"mdl_{row_item['ID']}_{idx_t}")
-
-    st.divider()
-    st.markdown("##### ➕ Registrar Novo Comentário + Anexo")
-
-    cnt = st.session_state["form_counter"]
-    c_f1, c_f2 = st.columns([2, 1])
-    txt_coment = c_f1.text_area(
-        "Comentário sobre a evolução:", key=f"dlg_txt_{row_item['ID']}_{cnt}"
-    )
-    file_coment = c_f2.file_uploader(
-        "Upload de Evidência:", key=f"dlg_file_{row_item['ID']}_{cnt}"
-    )
-
-    if st.button("💾 Salvar Histórico", key=f"dlg_save_btn_{row_item['ID']}"):
-        if txt_coment or file_coment:
-            try:
-                nome_anexo = None
-                if file_coment is not None:
-                    nome_anexo = f"{row_item['ID']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{file_coment.name}"
-                    caminho = os.path.join(PASTA_EVIDENCIAS, nome_anexo)
-                    with open(caminho, "wb") as f:
-                        f.write(file_coment.getbuffer())
-
-                novo_item = {
-                    "Data": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
-                    "Nome": user_info["Nome"],
-                    "Usuario": user_info["Usuario"],
-                    "Texto": txt_coment,
-                    "Anexo": nome_anexo,
-                }
-                timeline.append(novo_item)
-
-                idx_k = df[df["ID"] == row_item["ID"]].index[0]
-                df.loc[idx_k, "Timeline_JSON"] = json.dumps(
-                    timeline, ensure_ascii=False
-                )
-                salvar_dados(df)
-                st.session_state["df_auditoria"] = df
-                st.session_state["form_counter"] += 1
-                st.success("Histórico atualizado com sucesso!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao salvar histórico: {e}")
-
-    st.divider()
-    with st.expander("⚠️ Área de Risco: Excluir Apontamento"):
-        st.write("Para excluir permanentemente este projeto, confirme abaixo:")
-        chk_del = st.checkbox(
-            "Eu compreendo e desejo excluir permanentemente este registro.",
-            key=f"chk_del_dlg_{row_item['ID']}",
-        )
-        if st.button(
-            "🔥 CONFIRMAR EXCLUSÃO DEFINITIVA",
-            key=f"btn_confirm_del_dlg_{row_item['ID']}",
-            type="primary",
-            disabled=not chk_del,
-        ):
-            try:
-                df_novo = df[df["ID"] != row_item["ID"]].copy()
-                salvar_dados(df_novo)
-                st.session_state["df_auditoria"] = df_novo
-                st.session_state["id_modal_aberto"] = None
-                registrar_log(
-                    user_info["Usuario"],
-                    "Exclusão",
-                    f"Excluiu ID {row_item['ID']}",
-                )
-                st.success("Projeto excluído com sucesso!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Erro ao excluir o projeto: {e}")
-
-
 if (
     "id_modal_aberto" in st.session_state
     and st.session_state["id_modal_aberto"]
 ):
-    modal_detalhes_dialog(st.session_state["id_modal_aberto"])
+    id_modal = st.session_state["id_modal_aberto"]
+    match_row = df[df["ID"] == id_modal]
+
+    if not match_row.empty:
+        row_item = match_row.iloc[0]
+
+        st.markdown("---")
+        with st.container():
+            c_head1, c_head2 = st.columns([6, 1])
+            c_head1.markdown(
+                f"## 📋 Detalhes do Apontamento #{row_item['ID']} — {row_item['Cliente_Projeto']}"
+            )
+            # BOTÃO DE FECHAMENTO DIRETO QUE LIMPA O ESTADO E ATUALIZA A TELA NA HORA
+            if c_head2.button("❌ FECHAR", type="primary", key="btn_close_modal_direct"):
+                st.session_state["id_modal_aberto"] = None
+                st.rerun()
+
+            c_m1, c_m2, c_m3 = st.columns(3)
+            c_m1.write(f"**Responsável:** {row_item['Nome_Responsavel']}")
+            c_m2.write(f"**Área:** {row_item['Area_Responsavel']}")
+            c_m3.write(f"**Status Atual:** `{row_item['Status']}`")
+
+            st.markdown(f"**Achado Mapeado:** {row_item['Achado']}")
+            st.markdown(f"**Ação Corretiva:** {row_item['Acao_Corretiva']}")
+            st.info(
+                f"🛫 **Data Início:** {formatar_data_br(row_item.get('Data_Inicio'))} | 🎯 **Prazo:** {formatar_data_br(row_item.get('Prazo'))} | ⏱️ **Última Ação:** {row_item.get('Ultima_Acao', '-')}"
+            )
+
+            st.markdown("##### 💬 Histórico de Registros")
+            try:
+                timeline = json.loads(str(row_item.get("Timeline_JSON", "[]")))
+            except:
+                timeline = []
+
+            if not timeline:
+                st.caption("Nenhum comentário ou evidência anexada até o momento.")
+            else:
+                for idx_t, item in enumerate(timeline):
+                    st.markdown(
+                        f"""
+                    <div class="comment-item">
+                        <div class="comment-header">👤 {item['Nome']} ({item['Usuario']}) - 📅 {item['Data']}</div>
+                        <div>{item['Texto']}</div>
+                    </div>
+                    """,
+                        unsafe_allow_html=True,
+                    )
+                    if item.get("Anexo"):
+                        renderizar_anexo_elemento(
+                            item["Anexo"], key_prefix=f"mdl_{row_item['ID']}_{idx_t}"
+                        )
+
+            st.markdown("##### ➕ Registrar Novo Comentário + Anexo")
+            cnt = st.session_state["form_counter"]
+            c_f1, c_f2 = st.columns([2, 1])
+            txt_coment = c_f1.text_area(
+                "Comentário sobre a evolução:", key=f"dlg_txt_{row_item['ID']}_{cnt}"
+            )
+            file_coment = c_f2.file_uploader(
+                "Upload de Evidência:", key=f"dlg_file_{row_item['ID']}_{cnt}"
+            )
+
+            if st.button("💾 Salvar Histórico", key=f"dlg_save_btn_{row_item['ID']}"):
+                if txt_coment or file_coment:
+                    try:
+                        nome_anexo = None
+                        if file_coment is not None:
+                            nome_anexo = f"{row_item['ID']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{file_coment.name}"
+                            caminho = os.path.join(PASTA_EVIDENCIAS, nome_anexo)
+                            with open(caminho, "wb") as f:
+                                f.write(file_coment.getbuffer())
+
+                        novo_item = {
+                            "Data": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
+                            "Nome": user_info["Nome"],
+                            "Usuario": user_info["Usuario"],
+                            "Texto": txt_coment,
+                            "Anexo": nome_anexo,
+                        }
+                        timeline.append(novo_item)
+
+                        idx_k = df[df["ID"] == row_item["ID"]].index[0]
+                        df.loc[idx_k, "Timeline_JSON"] = json.dumps(
+                            timeline, ensure_ascii=False
+                        )
+                        salvar_dados(df)
+                        st.session_state["df_auditoria"] = df
+                        st.session_state["form_counter"] += 1
+                        st.success("Histórico atualizado com sucesso!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao salvar histórico: {e}")
+
+            with st.expander("⚠️ Área de Risco: Excluir Apontamento"):
+                chk_del = st.checkbox(
+                    "Eu compreendo e desejo excluir permanentemente este registro.",
+                    key=f"chk_del_dlg_{row_item['ID']}",
+                )
+                if st.button(
+                    "🔥 CONFIRMAR EXCLUSÃO DEFINITIVA",
+                    key=f"btn_confirm_del_dlg_{row_item['ID']}",
+                    type="primary",
+                    disabled=not chk_del,
+                ):
+                    try:
+                        df_novo = df[df["ID"] != row_item["ID"]].copy()
+                        salvar_dados(df_novo)
+                        st.session_state["df_auditoria"] = df_novo
+                        st.session_state["id_modal_aberto"] = None
+                        st.success("Projeto excluído com sucesso!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao excluir o projeto: {e}")
+
+        st.markdown("---")
 
 # ---------------------------------------------------------
 # TELA 1: PAINEL EXECUTIVO COMPLETO
@@ -876,7 +875,7 @@ with tabs[0]:
 
     st.markdown("### 📋 Matriz Geral de Apontamentos (Todos os Registros)")
     st.caption(
-        "💡 Selecione uma linha da tabela para abrir os detalhes completos e o histórico no modal."
+        "💡 Selecione uma linha da tabela para abrir os detalhes completos e o histórico no painel superior."
     )
 
     df_matriz_exibicao = df_filtrado.copy()
@@ -1223,59 +1222,70 @@ with tabs[2]:
                         st.rerun()
 
 # ---------------------------------------------------------
-# TELA 4: MESTRE CENTRAL DE ANEXOS E HISTÓRICO
+# TELA 4: MESTRE CENTRAL DE ANEXOS (GALERIA DOCUMENTAL E REPOSITÓRIO FÍSICO)
 # ---------------------------------------------------------
 with tabs[3]:
-    st.markdown("### 📤 Central Mestre de Anexos & Histórico Auditável")
+    st.markdown("### 📤 Mestre Central de Anexos & Repositório Documental")
+    st.caption("Centralização inteligente e auditoria visual de todas as evidências anexadas no sistema.")
 
-    if not df.empty:
-        proj_sel_h = st.selectbox(
-            "📌 Selecione o Projeto / Cliente:",
-            options=df["Cliente_Projeto"].unique(),
-            key="sb_proj_h",
-        )
-        df_sub_h = df[df["Cliente_Projeto"] == proj_sel_h]
+    # MÉTICAS DO REPOSITÓRIO
+    lista_arquivos_servidor = [f for f in os.listdir(PASTA_EVIDENCIAS) if os.path.isfile(os.path.join(PASTA_EVIDENCIAS, f))]
+    total_anexos_count = len(lista_arquivos_servidor)
+    tamanho_total_mb = sum([os.path.getsize(os.path.join(PASTA_EVIDENCIAS, f)) for f in lista_arquivos_servidor]) / (1024 * 1024) if total_anexos_count > 0 else 0
 
-        id_h = st.selectbox(
-            "Selecione o Apontamento:",
-            options=df_sub_h["ID"].unique(),
-            key="sb_id_h",
-        )
-        row_h = df[df["ID"] == id_h].iloc[0]
+    m1, m2, m3 = st.columns(3)
+    m1.metric("📁 Total de Evidências Armazenadas", f"{total_anexos_count} Arquivos")
+    m2.metric("💾 Espaço Utilizado em Disco", f"{tamanho_total_mb:.2f} MB")
+    m3.metric("🔒 Status do Repositório", "Ativo & Auditado")
 
-        st.info(
-            f"**Projeto:** {row_h['Cliente_Projeto']} | **Achado:** {row_h['Achado']} | **Status:** {row_h['Status']}"
-        )
+    st.divider()
 
-        try:
-            timeline_mestre = json.loads(str(row_h.get("Timeline_JSON", "[]")))
-        except:
-            timeline_mestre = []
+    busca_anexo = st.text_input("🔍 Pesquisar por Nome de Arquivo ou Código do Apontamento:")
 
-        if len(timeline_mestre) == 0:
-            st.info("Nenhum histórico registrado para este projeto.")
-        else:
-            for idx_tm, t_item in enumerate(timeline_mestre):
+    if not lista_arquivos_servidor:
+        st.info("Nenhuma evidência física foi armazenada no repositório ainda.")
+    else:
+        st.markdown("#### 📂 Galeria Físico-Documental de Anexos")
+        cols_galeria = st.columns(3)
+
+        idx_c = 0
+        for arq in lista_arquivos_servidor:
+            if busca_anexo and busca_anexo.lower() not in arq.lower():
+                continue
+
+            with cols_galeria[idx_c % 3]:
+                caminho_arq = os.path.join(PASTA_EVIDENCIAS, arq)
+                tam_kb = os.path.getsize(caminho_arq) / 1024
+
                 st.markdown(
                     f"""
-                <div class="comment-item">
-                    <div class="comment-header">👤 {t_item['Nome']} ({t_item['Usuario']}) - 📅 {t_item['Data']}</div>
-                    <div>{t_item['Texto']}</div>
+                <div class="file-card">
+                    <div style="font-weight: bold; color: #0f172a; word-break: break-all;">📎 {arq}</div>
+                    <div style="font-size: 0.78rem; color: #64748b; margin-top: 4px;">Tamanho: <b>{tam_kb:.1f} KB</b></div>
                 </div>
                 """,
                     unsafe_allow_html=True,
                 )
-                if t_item.get("Anexo"):
-                    renderizar_anexo_elemento(t_item["Anexo"], key_prefix=f"mst_{row_h['ID']}_{idx_tm}")
+
+                if arq.lower().endswith((".png", ".jpg", ".jpeg")):
+                    st.image(caminho_arq, use_container_width=True)
+
+                with open(caminho_arq, "rb") as f_data:
+                    st.download_button(
+                        label=f"📥 Baixar Arquivo",
+                        data=f_data,
+                        file_name=arq,
+                        mime="application/octet-stream",
+                        key=f"dl_mst_gal_{arq}",
+                    )
+            idx_c += 1
 
 # ---------------------------------------------------------
-# TELA 5: EXTRATOR DE RELATÓRIOS (NOVO DESIGN DINÂMICO EXECUTIVO)
+# TELA 5: EXTRATOR DE RELATÓRIOS (AUDITORIA DE SLA & LEAD TIME DE GOVERNANÇA)
 # ---------------------------------------------------------
 with tabs[4]:
-    st.markdown("### 📥 Extrator Inteligente de Relatórios Executivos")
-    st.caption(
-        "Filtre os dados e exporte a síntese executiva em formato Excel (.xlsx) ou navegue na trilha auditável por projeto."
-    )
+    st.markdown("### 📥 Extrator Inteligente & Análise de SLA de Governança")
+    st.caption("Geração de relatórios gerenciais e acompanhamento analítico do tempo de resposta (SLA) das ações.")
 
     f_c1, f_c2, f_c3 = st.columns(3)
 
@@ -1308,6 +1318,36 @@ with tabs[4]:
 
     st.divider()
 
+    # CÁLCULO DE SLA E LEAD TIME DIVERSIFICADO
+    if not df_rel.empty:
+        df_sla = df_rel.copy()
+        df_sla["dt_inicio_parsed"] = pd.to_datetime(df_sla["Data_Inicio"], errors="coerce")
+        df_sla["dt_prazo_parsed"] = pd.to_datetime(df_sla["Prazo"], errors="coerce")
+        df_sla["Dias_Corridos"] = (pd.to_datetime("today") - df_sla["dt_inicio_parsed"]).dt.days
+        df_sla["Dias_Para_Vencer"] = (df_sla["dt_prazo_parsed"] - pd.to_datetime("today")).dt.days
+
+        st.markdown("#### 📊 Painel de Desempenho e Matriz de SLA do Projeto")
+
+        s1, s2, s3 = st.columns(3)
+        s1.metric("⏱️ Lead Time Médio de Ações", f"{df_sla['Dias_Corridos'].mean():.1f} Dias")
+        s2.metric("🎯 Taxa de Conformidade no Prazo", f"{((len(df_sla[df_sla['Status'] == 'Concluído']) / len(df_sla))*100):.1f}%")
+        s3.metric("⚠️ Apontamentos Críticos Ativos", f"{len(df_sla[df_sla['Severidade'] == 'Crítica'])} Ações")
+
+        st.divider()
+
+        st.markdown("#### 📋 Matriz Analítica Executiva de SLA")
+        cols_sla_render = [
+            "ID",
+            "Cliente_Projeto",
+            "Achado",
+            "Severidade",
+            "Nome_Responsavel",
+            "Status",
+            "Dias_Corridos",
+            "Dias_Para_Vencer"
+        ]
+        st.dataframe(df_sla[cols_sla_render], use_container_width=True)
+
     # EXPORTAÇÃO EXCEL MULTI-ABAS
     def gerar_excel_relatorio_cascata(df_export):
         output = io.BytesIO()
@@ -1320,108 +1360,20 @@ with tabs[4]:
             cols_limpas = [c for c in df_base_exp.columns if not c.startswith("dt_tmp")]
             df_base_exp[cols_limpas].to_excel(writer, sheet_name="Base_Dados_Completa", index=False)
 
-            linhas_cascata = []
-            for _, r in df_export.iterrows():
-                linhas_cascata.append({
-                    "Nivel": "PROJETO",
-                    "ID": r["ID"],
-                    "Cliente_Projeto": r["Cliente_Projeto"],
-                    "Status": r["Status"],
-                    "Severidade": r["Severidade"],
-                    "Achado_Ou_Comentario": r["Achado"],
-                    "Acao_Ou_Usuario": r["Acao_Corretiva"],
-                    "Responsavel": r["Nome_Responsavel"],
-                    "Data_Inicio": formatar_data_br(r["Data_Inicio"]),
-                    "Prazo": formatar_data_br(r["Prazo"]),
-                    "Anexo_Evidencia": "-",
-                })
-
-                try:
-                    hist_l = json.loads(str(r.get("Timeline_JSON", "[]")))
-                except:
-                    hist_l = []
-
-                for h in hist_l:
-                    linhas_cascata.append({
-                        "Nivel": "   └─ AÇÃO/HISTÓRICO",
-                        "ID": r["ID"],
-                        "Cliente_Projeto": r["Cliente_Projeto"],
-                        "Status": r["Status"],
-                        "Severidade": "-",
-                        "Achado_Ou_Comentario": f"Texto: {h.get('Texto', '')}",
-                        "Acao_Ou_Usuario": f"Por: {h.get('Nome', '')} ({h.get('Usuario', '')})",
-                        "Responsavel": "-",
-                        "Data_Inicio": h.get("Data", ""),
-                        "Prazo": "-",
-                        "Anexo_Evidencia": h.get("Anexo") if h.get("Anexo") else "Sem anexo",
-                    })
-
-            df_cascata_excel = pd.DataFrame(linhas_cascata)
-            df_cascata_excel.to_excel(writer, sheet_name="Visao_Cascata_Executiva", index=False)
-
         output.seek(0)
         return output
 
+    st.divider()
     try:
         excel_bytes = gerar_excel_relatorio_cascata(df_rel)
         st.download_button(
-            label="📊 Download Relatório Completo em Excel (.xlsx)",
+            label="📊 Exportar Relatório Executivo Analítico em Excel (.xlsx)",
             data=excel_bytes,
             file_name=f"Relatorio_Executivo_Compliance_{datetime.date.today().strftime('%d_%m_%Y')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
     except Exception as e:
         st.error(f"Erro ao gerar planilha Excel: {e}")
-
-    st.divider()
-
-    # NOVO DESIGN EXECUTIVO: SANFONA / ACCORDION DINÂMICO
-    st.markdown("### 🏛️ Trilha de Governança Executiva & Apontamentos")
-
-    if df_rel.empty:
-        st.info("Nenhum registro encontrado para os filtros selecionados.")
-    else:
-        for idx_r, row_r in df_rel.iterrows():
-            try:
-                hist_items = json.loads(str(row_r.get("Timeline_JSON", "[]")))
-            except:
-                hist_items = []
-
-            qtd_hist = len(hist_items)
-            sev_str = str(row_r['Severidade']).upper()
-
-            # Título dinâmico da sanfona
-            titulo_expander = f"📌 {row_r['Cliente_Projeto']} (#{row_r['ID']}) — Status: {row_r['Status']} | Severidade: {sev_str} | ({qtd_hist} Ações Registradas)"
-
-            with st.expander(titulo_expander):
-                st.markdown("#### 📋 Ficha Técnica do Apontamento")
-                col_i1, col_i2, col_i3, col_i4 = st.columns(4)
-                col_i1.markdown(f"**Área Responsável:** {row_r['Area_Responsavel']}")
-                col_i2.markdown(f"**Responsável:** {row_r['Nome_Responsavel']}")
-                col_i3.markdown(f"**Data de Início:** {formatar_data_br(row_r.get('Data_Inicio'))}")
-                col_i4.markdown(f"**Prazo Conclusão:** {formatar_data_br(row_r.get('Prazo'))}")
-
-                st.markdown(f"**Achado:** {row_r['Achado']}")
-                st.markdown(f"**Ação Recomendada:** {row_r['Acao_Corretiva']}")
-
-                st.divider()
-                st.markdown("#### 📜 Linha do Tempo Auditável de Interações")
-
-                if hist_items:
-                    for idx_h, h in enumerate(hist_items):
-                        st.markdown(
-                            f"""
-                        <div class="comment-item">
-                            <div class="comment-header">👤 {h.get('Nome', '')} ({h.get('Usuario', '')}) — 📅 {h.get('Data', '')}</div>
-                            <div>{h.get('Texto', '')}</div>
-                        </div>
-                        """,
-                            unsafe_allow_html=True,
-                        )
-                        if h.get("Anexo"):
-                            renderizar_anexo_elemento(h["Anexo"], key_prefix=f"rel_acc_{row_r['ID']}_{idx_h}")
-                else:
-                    st.caption("Nenhuma interação ou evidência cadastrada nesta trilha.")
 
 # ---------------------------------------------------------
 # TELA 6: AUDITORIA MASTER
