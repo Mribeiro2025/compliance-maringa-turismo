@@ -53,7 +53,7 @@ st.markdown(
     .card-media { border-top-color: #eab308 !important; }
     .card-baixa { border-top-color: #22c55e !important; }
 
-    /* Badges */
+    /* Badges Executivos */
     .badge {
         font-size: 0.70rem; font-weight: 700; padding: 3px 10px;
         border-radius: 12px; color: white; display: inline-block; text-transform: uppercase;
@@ -65,9 +65,9 @@ st.markdown(
 
     /* Timeline de Comentários */
     .comment-item {
-        background-color: #f8fafc;
+        background-color: #ffffff;
         border: 1px solid #e2e8f0;
-        border-left: 4px solid #3b82f6;
+        border-left: 4px solid #0284c7;
         padding: 12px 14px;
         margin-bottom: 10px;
         border-radius: 8px;
@@ -75,26 +75,9 @@ st.markdown(
     }
     .comment-header {
         font-weight: 700;
-        color: #1e293b;
-        font-size: 0.78rem;
+        color: #0f172a;
+        font-size: 0.80rem;
         margin-bottom: 4px;
-    }
-    
-    /* Visão Relatório Tipo Cascata / DRE */
-    .dre-card {
-        background-color: #ffffff;
-        border: 1px solid #cbd5e1;
-        border-radius: 8px;
-        padding: 16px;
-        margin-bottom: 16px;
-    }
-    .dre-header {
-        font-size: 1.1rem;
-        font-weight: bold;
-        color: #1e3a8a;
-        border-bottom: 2px solid #e2e8f0;
-        padding-bottom: 6px;
-        margin-bottom: 12px;
     }
 </style>
 """,
@@ -571,26 +554,23 @@ tabs = st.tabs(abas)
 
 
 # ---------------------------------------------------------
-# MODAL / DIALOG DE DETALHES (CORRIGIDO: LIMPEZA & SEM DUPLICIDADE)
+# MODAL / DIALOG DE DETALHES (CORREÇÃO DO FECHAMENTO PELO X NATIVO)
 # ---------------------------------------------------------
+def ao_fechar_modal():
+    st.session_state["id_modal_aberto"] = None
+
+
 @st.dialog("📋 Detalhes & Rastreabilidade do Apontamento", width="large")
 def modal_detalhes_dialog(id_projeto):
     match_row = df[df["ID"] == id_projeto]
     if match_row.empty:
         st.error("Projeto não encontrado.")
-        if st.button("❌ Fechar"):
-            st.session_state["id_modal_aberto"] = None
-            st.rerun()
+        st.session_state["id_modal_aberto"] = None
         return
 
     row_item = match_row.iloc[0]
 
-    # Botão Superior de Fechamento Rápido
-    c_top1, c_top2 = st.columns([5, 1])
-    c_top1.markdown(f"### Projeto: {row_item['Cliente_Projeto']}")
-    if c_top2.button("❌ Fechar", key=f"btn_close_modal_top_{row_item['ID']}"):
-        st.session_state["id_modal_aberto"] = None
-        st.rerun()
+    st.markdown(f"### Projeto: {row_item['Cliente_Projeto']}")
 
     c_m1, c_m2, c_m3 = st.columns(3)
     c_m1.write(f"**ID:** #{row_item['ID']}")
@@ -631,7 +611,6 @@ def modal_detalhes_dialog(id_projeto):
     st.divider()
     st.markdown("##### ➕ Registrar Novo Comentário + Anexo")
 
-    # USO DE CHAVE DINÂMICA PARA LIMPAR OS CAMPOS APÓS SALVAR
     cnt = st.session_state["form_counter"]
     c_f1, c_f2 = st.columns([2, 1])
     txt_coment = c_f1.text_area(
@@ -666,7 +645,6 @@ def modal_detalhes_dialog(id_projeto):
                 )
                 salvar_dados(df)
                 st.session_state["df_auditoria"] = df
-                # Incrementa contador para resetar os campos de texto e arquivo
                 st.session_state["form_counter"] += 1
                 st.success("Histórico atualizado com sucesso!")
                 st.rerun()
@@ -1291,15 +1269,15 @@ with tabs[3]:
                     renderizar_anexo_elemento(t_item["Anexo"], key_prefix=f"mst_{row_h['ID']}_{idx_tm}")
 
 # ---------------------------------------------------------
-# TELA 5: EXTRATOR DE RELATÓRIOS
+# TELA 5: EXTRATOR DE RELATÓRIOS (NOVO DESIGN DINÂMICO EXECUTIVO)
 # ---------------------------------------------------------
 with tabs[4]:
     st.markdown("### 📥 Extrator Inteligente de Relatórios Executivos")
     st.caption(
-        "Filtre os dados por emissão ou conclusão e exporte o relatório em formato Excel (.xlsx) com a visão em cascata e detalhes completos."
+        "Filtre os dados e exporte a síntese executiva em formato Excel (.xlsx) ou navegue na trilha auditável por projeto."
     )
 
-    f_c1, f_c2, f_c3, f_c4 = st.columns(4)
+    f_c1, f_c2, f_c3 = st.columns(3)
 
     proj_filtro_rel = f_c1.selectbox(
         "Filtrar por Projeto:",
@@ -1330,6 +1308,7 @@ with tabs[4]:
 
     st.divider()
 
+    # EXPORTAÇÃO EXCEL MULTI-ABAS
     def gerar_excel_relatorio_cascata(df_export):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -1386,7 +1365,7 @@ with tabs[4]:
     try:
         excel_bytes = gerar_excel_relatorio_cascata(df_rel)
         st.download_button(
-            label="📥 Download Relatório Profissional em Excel (.xlsx)",
+            label="📊 Download Relatório Completo em Excel (.xlsx)",
             data=excel_bytes,
             file_name=f"Relatorio_Executivo_Compliance_{datetime.date.today().strftime('%d_%m_%Y')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1396,48 +1375,53 @@ with tabs[4]:
 
     st.divider()
 
-    st.markdown("### 📊 Visão Auditável em Cascata (DRE de Governança)")
+    # NOVO DESIGN EXECUTIVO: SANFONA / ACCORDION DINÂMICO
+    st.markdown("### 🏛️ Trilha de Governança Executiva & Apontamentos")
 
     if df_rel.empty:
         st.info("Nenhum registro encontrado para os filtros selecionados.")
     else:
         for idx_r, row_r in df_rel.iterrows():
-            with st.container():
-                st.markdown(
-                    f"""
-                <div class="dre-card">
-                    <div class="dre-header">
-                        📌 {row_r['Cliente_Projeto']} — ID: #{row_r['ID']} 
-                        <span style="float: right; font-size: 0.85rem; color: #64748b;">Status: <b>{row_r['Status']}</b></span>
-                    </div>
-                    <div style="font-size: 0.9rem; margin-bottom: 6px;"><b>Achado:</b> {row_r['Achado']}</div>
-                    <div style="font-size: 0.9rem; margin-bottom: 6px;"><b>Ação Recomendada:</b> {row_r['Acao_Corretiva']}</div>
-                    <div style="font-size: 0.82rem; color: #475569; margin-bottom: 10px;">
-                        👤 <b>Responsável:</b> {row_r['Nome_Responsavel']} | 🏢 <b>Área:</b> {row_r['Area_Responsavel']} | 🛫 <b>Início:</b> {formatar_data_br(row_r.get('Data_Inicio'))} | 🎯 <b>Prazo:</b> {formatar_data_br(row_r.get('Prazo'))} | ⏱️ <b>Última Ação:</b> {row_r.get('Ultima_Acao', '-')}
-                    </div>
-                """,
-                    unsafe_allow_html=True,
-                )
+            try:
+                hist_items = json.loads(str(row_r.get("Timeline_JSON", "[]")))
+            except:
+                hist_items = []
 
-                try:
-                    hist_items = json.loads(
-                        str(row_r.get("Timeline_JSON", "[]"))
-                    )
-                except:
-                    hist_items = []
+            qtd_hist = len(hist_items)
+            sev_str = str(row_r['Severidade']).upper()
+
+            # Título dinâmico da sanfona
+            titulo_expander = f"📌 {row_r['Cliente_Projeto']} (#{row_r['ID']}) — Status: {row_r['Status']} | Severidade: {sev_str} | ({qtd_hist} Ações Registradas)"
+
+            with st.expander(titulo_expander):
+                st.markdown("#### 📋 Ficha Técnica do Apontamento")
+                col_i1, col_i2, col_i3, col_i4 = st.columns(4)
+                col_i1.markdown(f"**Área Responsável:** {row_r['Area_Responsavel']}")
+                col_i2.markdown(f"**Responsável:** {row_r['Nome_Responsavel']}")
+                col_i3.markdown(f"**Data de Início:** {formatar_data_br(row_r.get('Data_Inicio'))}")
+                col_i4.markdown(f"**Prazo Conclusão:** {formatar_data_br(row_r.get('Prazo'))}")
+
+                st.markdown(f"**Achado:** {row_r['Achado']}")
+                st.markdown(f"**Ação Recomendada:** {row_r['Acao_Corretiva']}")
+
+                st.divider()
+                st.markdown("#### 📜 Linha do Tempo Auditável de Interações")
 
                 if hist_items:
-                    st.markdown("**📜 Histórico de Ações & Evidências Registradas:**")
                     for idx_h, h in enumerate(hist_items):
                         st.markdown(
-                            f"   * ➔ **[{h['Data']}] {h['Nome']}:** {h['Texto']}"
+                            f"""
+                        <div class="comment-item">
+                            <div class="comment-header">👤 {h.get('Nome', '')} ({h.get('Usuario', '')}) — 📅 {h.get('Data', '')}</div>
+                            <div>{h.get('Texto', '')}</div>
+                        </div>
+                        """,
+                            unsafe_allow_html=True,
                         )
                         if h.get("Anexo"):
-                            renderizar_anexo_elemento(h["Anexo"], key_prefix=f"casc_{row_r['ID']}_{idx_h}")
+                            renderizar_anexo_elemento(h["Anexo"], key_prefix=f"rel_acc_{row_r['ID']}_{idx_h}")
                 else:
-                    st.caption("   * ➔ Nenhum histórico registrado até o momento.")
-
-                st.markdown("</div>", unsafe_allow_html=True)
+                    st.caption("Nenhuma interação ou evidência cadastrada nesta trilha.")
 
 # ---------------------------------------------------------
 # TELA 6: AUDITORIA MASTER
