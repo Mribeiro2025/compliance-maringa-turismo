@@ -83,180 +83,205 @@ if not os.path.exists(PASTA_EVIDENCIAS):
 
 # 2. LOGS E USUÁRIOS
 def registrar_log(usuario, acao, detalhe):
-    data_hora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    novo_log = pd.DataFrame(
-        [
-            {
-                "Data_Hora": data_hora,
-                "Usuario": usuario,
-                "Acao": acao,
-                "Detalhe": detalhe,
-            }
-        ]
-    )
+    try:
+        data_hora = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        novo_log = pd.DataFrame(
+            [
+                {
+                    "Data_Hora": data_hora,
+                    "Usuario": str(usuario),
+                    "Acao": str(acao),
+                    "Detalhe": str(detalhe),
+                }
+            ]
+        )
 
-    if os.path.exists(ARQUIVO_LOGS):
-        df_logs = pd.read_excel(ARQUIVO_LOGS)
-        df_logs = pd.concat([df_logs, novo_log], ignore_index=True)
-    else:
-        df_logs = novo_log
+        if os.path.exists(ARQUIVO_LOGS):
+            df_logs = pd.read_excel(ARQUIVO_LOGS, dtype=str)
+            df_logs = pd.concat([df_logs, novo_log], ignore_index=True)
+        else:
+            df_logs = novo_log
 
-    df_logs.to_excel(ARQUIVO_LOGS, index=False)
+        df_logs.to_excel(ARQUIVO_LOGS, index=False)
+    except Exception as e:
+        st.warning(f"Não foi possível registrar o log do sistema: {e}")
 
 
 def carregar_usuarios():
-    if os.path.exists(ARQUIVO_USUARIOS):
-        # dtype=str força todas as colunas (especialmente Senha) a serem texto
-        df_u = pd.read_excel(ARQUIVO_USUARIOS, dtype=str)
-        df_u["Senha"] = df_u["Senha"].astype(str)
-        return df_u
-    else:
-        usuarios_default = pd.DataFrame(
-            [
-                {
-                    "Usuario": "mribeiro1",
-                    "Senha": "123",
-                    "Nome": "Marcos Ribeiro (Master)",
-                    "Nivel": "Master",
-                    "Status": "Ativo",
-                },
-                {
-                    "Usuario": "auditor1",
-                    "Senha": "123",
-                    "Nome": "Auditor Operacional",
-                    "Nivel": "Gestor",
-                    "Status": "Ativo",
-                },
-            ]
+    try:
+        if os.path.exists(ARQUIVO_USUARIOS):
+            df_u = pd.read_excel(ARQUIVO_USUARIOS, dtype=str)
+            # Garante que todas as colunas sejam estritamente tratadas como string/texto
+            for col in ["Usuario", "Senha", "Nome", "Nivel", "Status"]:
+                if col in df_u.columns:
+                    df_u[col] = df_u[col].fillna("").astype(str)
+            return df_u
+        else:
+            usuarios_default = pd.DataFrame(
+                [
+                    {
+                        "Usuario": "mribeiro1",
+                        "Senha": "123",
+                        "Nome": "Marcos Ribeiro (Master)",
+                        "Nivel": "Master",
+                        "Status": "Ativo",
+                    },
+                    {
+                        "Usuario": "auditor1",
+                        "Senha": "123",
+                        "Nome": "Auditor Operacional",
+                        "Nivel": "Gestor",
+                        "Status": "Ativo",
+                    },
+                ]
+            )
+            for col in usuarios_default.columns:
+                usuarios_default[col] = usuarios_default[col].astype(str)
+            usuarios_default.to_excel(ARQUIVO_USUARIOS, index=False)
+            return usuarios_default
+    except Exception as e:
+        st.error(f"Erro ao carregar dados de usuários: {e}")
+        return pd.DataFrame(
+            columns=["Usuario", "Senha", "Nome", "Nivel", "Status"]
         )
-        usuarios_default["Senha"] = usuarios_default["Senha"].astype(str)
-        usuarios_default.to_excel(ARQUIVO_USUARIOS, index=False)
-        return usuarios_default
 
 
 def salvar_usuarios(df_u):
-    df_u["Senha"] = df_u["Senha"].astype(str)
-    df_u.to_excel(ARQUIVO_USUARIOS, index=False)
+    try:
+        # Garante a conversão para string em todo o DataFrame antes de salvar em disco
+        df_salvar = df_u.copy()
+        for col in df_salvar.columns:
+            df_salvar[col] = df_salvar[col].astype(str)
+        df_salvar.to_excel(ARQUIVO_USUARIOS, index=False)
+    except Exception as e:
+        st.error(f"Erro ao salvar arquivo de usuários: {e}")
 
 
 # 3. BASE DE DADOS
 def carregar_dados():
-    if os.path.exists(ARQUIVO_MATRIZ):
-        df_base = pd.read_excel(ARQUIVO_MATRIZ)
-    else:
-        dados_iniciais = {
-            "ID": ["AUD-01", "AUD-02", "AUD-03", "AUD-04", "AUD-05"],
-            "Cliente_Projeto": [
-                "Vale S.A. - Governança",
-                "Banco Itaú - Bilhetes",
-                "Ambev - Reconciliação",
-                "Petrobras - Passagens",
-                "Vale S.A. - Cartões de Crédito",
-            ],
-            "Agencia": [
-                "São Paulo - HQ",
-                "Maringá",
-                "Rio de Janeiro",
-                "Curitiba",
-                "São Paulo - HQ",
-            ],
-            "Etapa_SIPOC": [
-                "Emissão & Reserva",
-                "Faturamento & Cobrança",
-                "Atendimento",
-                "Governança & TI",
-                "Emissão & Reserva",
-            ],
-            "Categoria": [
-                "Caixa",
-                "Crédito",
-                "Segurança",
-                "Compliance",
-                "Operacional",
-            ],
-            "Achado": [
-                "Divergência no fechamento físico de caixa",
-                "Falta de assinatura em contrato de cliente corporativo",
-                "Câmera de CFTV inoperante na tesouraria",
-                "Treinamento de compliance pendente",
-                "Emissão de passagens sem bilhete de autorização",
-            ],
-            "Severidade": ["Alta", "Crítica", "Média", "Baixa", "Crítica"],
-            "Acao_Corretiva": [
-                "Realizar contagem diária e redefinir alçada.",
-                "Coletar assinatura pendente ou reter crédito.",
-                "Trocar equipamento de gravação CFTV.",
-                "Agendar treinamento para equipe.",
-                "Bloquear emissão sem prévia alçada no sistema.",
-            ],
-            "Area_Responsavel": [
-                "Operações",
-                "Risco/Crédito",
-                "Infraestrutura",
-                "Recursos Humanos",
-                "Operações",
-            ],
-            "Nome_Responsavel": [
-                "Carlos Silva",
-                "Ana Souza",
-                "João Lima",
-                "Fernanda Costa",
-                "Carlos Silva",
-            ],
-            "Email_Responsavel": [
-                "carlos@maringaturismo.com.br",
-                "ana@maringaturismo.com.br",
-                "joao@maringaturismo.com.br",
-                "fernanda@maringaturismo.com.br",
-                "carlos@maringaturismo.com.br",
-            ],
-            "Data_Inicio": [
-                "2026-08-01",
-                "2026-08-05",
-                "2026-08-10",
-                "2026-08-15",
-                "2026-08-20",
-            ],
-            "Prazo": [
-                "2026-09-15",
-                "2026-08-28",
-                "2026-09-10",
-                "2026-10-01",
-                "2026-09-02",
-            ],
-            "Data_Conclusao": ["-", "-", "2026-09-02", "-", "-"],
-            "Status": [
-                "A Fazer",
-                "Em Validação",
-                "Concluído",
-                "Em Andamento",
-                "Atrasado",
-            ],
-            "Timeline_JSON": ["[]", "[]", "[]", "[]", "[]"],
+    try:
+        if os.path.exists(ARQUIVO_MATRIZ):
+            df_base = pd.read_excel(ARQUIVO_MATRIZ, dtype=str)
+        else:
+            dados_iniciais = {
+                "ID": ["AUD-01", "AUD-02", "AUD-03", "AUD-04", "AUD-05"],
+                "Cliente_Projeto": [
+                    "Vale S.A. - Governança",
+                    "Banco Itaú - Bilhetes",
+                    "Ambev - Reconciliação",
+                    "Petrobras - Passagens",
+                    "Vale S.A. - Cartões de Crédito",
+                ],
+                "Agencia": [
+                    "São Paulo - HQ",
+                    "Maringá",
+                    "Rio de Janeiro",
+                    "Curitiba",
+                    "São Paulo - HQ",
+                ],
+                "Etapa_SIPOC": [
+                    "Emissão & Reserva",
+                    "Faturamento & Cobrança",
+                    "Atendimento",
+                    "Governança & TI",
+                    "Emissão & Reserva",
+                ],
+                "Categoria": [
+                    "Caixa",
+                    "Crédito",
+                    "Segurança",
+                    "Compliance",
+                    "Operacional",
+                ],
+                "Achado": [
+                    "Divergência no fechamento físico de caixa",
+                    "Falta de assinatura em contrato de cliente corporativo",
+                    "Câmera de CFTV inoperante na tesouraria",
+                    "Treinamento de compliance pendente",
+                    "Emissão de passagens sem bilhete de autorização",
+                ],
+                "Severidade": ["Alta", "Crítica", "Média", "Baixa", "Crítica"],
+                "Acao_Corretiva": [
+                    "Realizar contagem diária e redefinir alçada.",
+                    "Coletar assinatura pendente ou reter crédito.",
+                    "Trocar equipamento de gravação CFTV.",
+                    "Agendar treinamento para equipe.",
+                    "Bloquear emissão sem prévia alçada no sistema.",
+                ],
+                "Area_Responsavel": [
+                    "Operações",
+                    "Risco/Crédito",
+                    "Infraestrutura",
+                    "Recursos Humanos",
+                    "Operações",
+                ],
+                "Nome_Responsavel": [
+                    "Carlos Silva",
+                    "Ana Souza",
+                    "João Lima",
+                    "Fernanda Costa",
+                    "Carlos Silva",
+                ],
+                "Email_Responsavel": [
+                    "carlos@maringaturismo.com.br",
+                    "ana@maringaturismo.com.br",
+                    "joao@maringaturismo.com.br",
+                    "fernanda@maringaturismo.com.br",
+                    "carlos@maringaturismo.com.br",
+                ],
+                "Data_Inicio": [
+                    "2026-08-01",
+                    "2026-08-05",
+                    "2026-08-10",
+                    "2026-08-15",
+                    "2026-08-20",
+                ],
+                "Prazo": [
+                    "2026-09-15",
+                    "2026-08-28",
+                    "2026-09-10",
+                    "2026-10-01",
+                    "2026-09-02",
+                ],
+                "Data_Conclusao": ["-", "-", "2026-09-02", "-", "-"],
+                "Status": [
+                    "A Fazer",
+                    "Em Validação",
+                    "Concluído",
+                    "Em Andamento",
+                    "Atrasado",
+                ],
+                "Timeline_JSON": ["[]", "[]", "[]", "[]", "[]"],
+            }
+            df_base = pd.DataFrame(dados_iniciais)
+            df_base.to_excel(ARQUIVO_MATRIZ, index=False)
+
+        colunas_obrigatorias = {
+            "Cliente_Projeto": "Projeto Geral",
+            "Etapa_SIPOC": "Geral",
+            "Status": "A Fazer",
+            "Severidade": "Média",
+            "Data_Inicio": str(datetime.date.today()),
+            "Prazo": str(datetime.date.today()),
+            "Data_Conclusao": "-",
+            "Timeline_JSON": "[]",
         }
-        df_base = pd.DataFrame(dados_iniciais)
-        df_base.to_excel(ARQUIVO_MATRIZ, index=False)
+        for col, default_val in colunas_obrigatorias.items():
+            if col not in df_base.columns:
+                df_base[col] = default_val
 
-    colunas_obrigatorias = {
-        "Cliente_Projeto": "Projeto Geral",
-        "Etapa_SIPOC": "Geral",
-        "Status": "A Fazer",
-        "Severidade": "Média",
-        "Data_Inicio": str(datetime.date.today()),
-        "Prazo": str(datetime.date.today()),
-        "Data_Conclusao": "-",
-        "Timeline_JSON": "[]",
-    }
-    for col, default_val in colunas_obrigatorias.items():
-        if col not in df_base.columns:
-            df_base[col] = default_val
-
-    df_base["Status"] = df_base["Status"].replace({"Congos": "Concluído"})
-    return df_base
+        df_base["Status"] = df_base["Status"].replace({"Congos": "Concluído"})
+        return df_base
+    except Exception as e:
+        st.error(f"Erro ao carregar matriz de auditoria: {e}")
+        return pd.DataFrame()
 
 
 def salvar_dados(dataframe):
-    dataframe.to_excel(ARQUIVO_MATRIZ, index=False)
+    try:
+        dataframe.to_excel(ARQUIVO_MATRIZ, index=False)
+    except Exception as e:
+        st.error(f"Erro ao salvar alterações da matriz: {e}")
 
 
 # Autenticação
@@ -277,20 +302,25 @@ if not st.session_state["autenticado"]:
             usr = st.text_input("Usuário:")
             pwd = st.text_input("Senha:", type="password")
             if st.form_submit_button("Entrar no Sistema"):
-                match = df_users[
-                    (df_users["Usuario"].astype(str) == str(usr))
-                    & (df_users["Senha"].astype(str) == str(pwd))
-                ]
-                if len(match) > 0:
-                    if match.iloc[0]["Status"] == "Ativo":
-                        st.session_state["autenticado"] = True
-                        st.session_state["usuario_logado"] = match.iloc[0].to_dict()
-                        registrar_log(usr, "Login", "Acesso efetuado")
-                        st.rerun()
+                try:
+                    match = df_users[
+                        (df_users["Usuario"].astype(str) == str(usr).strip())
+                        & (df_users["Senha"].astype(str) == str(pwd).strip())
+                    ]
+                    if len(match) > 0:
+                        if match.iloc[0]["Status"] == "Ativo":
+                            st.session_state["autenticado"] = True
+                            st.session_state["usuario_logado"] = match.iloc[
+                                0
+                            ].to_dict()
+                            registrar_log(usr, "Login", "Acesso efetuado")
+                            st.rerun()
+                        else:
+                            st.error("Usuário aguardando aprovação Master.")
                     else:
-                        st.error("Usuário aguardando aprovação Master.")
-                else:
-                    st.error("Usuário ou senha incorretos.")
+                        st.error("Usuário ou senha incorretos.")
+                except Exception as e:
+                    st.error(f"Falha no processo de autenticação: {e}")
 
     with tab_cadastro:
         with st.form("form_solicitar_acesso"):
@@ -298,23 +328,30 @@ if not st.session_state["autenticado"]:
             novo_nome = st.text_input("Nome Completo:")
             nova_pwd = st.text_input("Senha:", type="password")
             if st.form_submit_button("Solicitar Acesso"):
-                if novo_usr in df_users["Usuario"].values:
-                    st.warning("Usuário já existente.")
-                elif novo_usr and nova_pwd:
-                    novo_row = pd.DataFrame(
-                        [
-                            {
-                                "Usuario": str(novo_usr),
-                                "Senha": str(nova_pwd),
-                                "Nome": novo_nome,
-                                "Nivel": "Gestor",
-                                "Status": "Pendente",
-                            }
-                        ]
-                    )
-                    df_users = pd.concat([df_users, novo_row], ignore_index=True)
-                    salvar_usuarios(df_users)
-                    st.success("Solicitação enviada com sucesso!")
+                try:
+                    if str(novo_usr).strip() in df_users["Usuario"].values:
+                        st.warning("Usuário já existente.")
+                    elif novo_usr and nova_pwd:
+                        novo_row = pd.DataFrame(
+                            [
+                                {
+                                    "Usuario": str(novo_usr).strip(),
+                                    "Senha": str(nova_pwd).strip(),
+                                    "Nome": str(novo_nome).strip(),
+                                    "Nivel": "Gestor",
+                                    "Status": "Pendente",
+                                }
+                            ]
+                        )
+                        df_users = pd.concat(
+                            [df_users, novo_row], ignore_index=True
+                        )
+                        salvar_usuarios(df_users)
+                        st.success("Solicitação enviada com sucesso!")
+                    else:
+                        st.warning("Preencha todos os campos obrigatórios.")
+                except Exception as e:
+                    st.error(f"Erro ao registrar novo usuário: {e}")
 
     st.stop()
 
@@ -327,33 +364,56 @@ is_master = user_info["Nivel"] == "Master"
 st.sidebar.markdown(f"**Usuário:** {user_info['Nome']}")
 st.sidebar.markdown(f"**Nível:** `{user_info['Nivel']}`")
 
+# BLOCO DE TROCA DE SENHA SEGURO E ANTI-QUEBRA
 with st.sidebar.popover("🔑 Trocar Minha Senha"):
     st.write("### Alterar Senha")
     senha_atual = st.text_input("Senha Atual:", type="password")
     nova_senha = st.text_input("Nova Senha:", type="password")
+
     if st.button("Confirmar Alteração"):
-        df_u = carregar_usuarios()
+        if not senha_atual or not nova_senha:
+            st.warning("Por favor, preencha a senha atual e a nova senha.")
+        else:
+            try:
+                # Recarrega a base garantindo que todas as colunas sejam texto puro
+                df_u = carregar_usuarios()
 
-        # Garante tipo objeto/string para evitar erro do pandas dtype
-        df_u["Senha"] = df_u["Senha"].astype(object)
+                # Busca pelo usuário atual de forma resiliente
+                usuario_alvo = str(user_info["Usuario"]).strip()
+                mask = df_u["Usuario"].astype(str).str.strip() == usuario_alvo
 
-        # Busca pelo usuário
-        mask = df_u["Usuario"].astype(str) == str(user_info["Usuario"])
-        
-        if mask.any():
-            idx_u = df_u[mask].index[0]
-            if str(df_u.loc[idx_u, "Senha"]) == str(senha_atual):
-                # Atualização segura convertendo para string
-                df_u.at[idx_u, "Senha"] = str(nova_senha)
-                salvar_usuarios(df_u)
-                registrar_log(
-                    user_info["Usuario"],
-                    "Troca de Senha",
-                    "Senha alterada com sucesso",
+                if not mask.any():
+                    st.error("Usuário não localizado no banco de dados.")
+                else:
+                    idx_u = df_u[mask].index[0]
+                    senha_armazenada = str(df_u.loc[idx_u, "Senha"]).strip()
+
+                    if senha_armazenada == str(senha_atual).strip():
+                        # Cria uma cópia com a coluna convertida para tipo Objeto/String geral
+                        # Isso previne erros de tipagem estrita no Pandas
+                        novas_senhas = list(df_u["Senha"].astype(str))
+                        novas_senhas[idx_u] = str(nova_senha).strip()
+
+                        df_u["Senha"] = novas_senhas
+                        salvar_usuarios(df_u)
+
+                        # Atualiza também o estado da sessão atual
+                        st.session_state["usuario_logado"]["Senha"] = str(
+                            nova_senha
+                        ).strip()
+
+                        registrar_log(
+                            user_info["Usuario"],
+                            "Troca de Senha",
+                            "Senha alterada com sucesso",
+                        )
+                        st.success("Senha alterada com sucesso!")
+                    else:
+                        st.error("Senha atual incorreta.")
+            except Exception as e:
+                st.error(
+                    f"Ocorreu um erro ao tentar atualizar a senha: {str(e)}"
                 )
-                st.success("Senha alterada com sucesso!")
-            else:
-                st.error("Senha atual incorreta.")
 
 if st.sidebar.button("🚪 Sair"):
     st.session_state["autenticado"] = False
@@ -401,7 +461,7 @@ if is_master:
 tabs = st.tabs(abas)
 
 # ---------------------------------------------------------
-# TELA 1: PAINEL EXECUTIVO COMPLETO (BI & COMPLIANCE C-LEVEL)
+# TELA 1: PAINEL EXECUTIVO COMPLETO
 # ---------------------------------------------------------
 with tabs[0]:
     st.markdown("### 📊 Painel Executivo de Governança, Riscos & Compliance")
@@ -409,7 +469,6 @@ with tabs[0]:
         "Maringá Turismo — Visão Consolidada de Riscos Operacionais e Soluções"
     )
 
-    # 1. CÁLCULO DOS KPIS AVANÇADOS
     total_achados = len(df_filtrado)
     concluidos = len(df_filtrado[df_filtrado["Status"] == "Concluído"])
     em_validacao = len(df_filtrado[df_filtrado["Status"] == "Em Validação"])
@@ -422,7 +481,6 @@ with tabs[0]:
         round((concluidos / total_achados) * 100, 1) if total_achados > 0 else 0
     )
 
-    # Health Score Dinâmico
     penalidade_atraso = atrasados * 15
     penalidade_critica = (
         len(df_filtrado[df_filtrado["Severidade"] == "Crítica"]) * 10
@@ -431,7 +489,6 @@ with tabs[0]:
         0, 100 - (penalidade_atraso + penalidade_critica)
     )
 
-    # BANNER KPIS PREMIUM
     k1, k2, k3, k4, k5 = st.columns(5)
 
     with k1:
@@ -491,7 +548,6 @@ with tabs[0]:
 
     st.divider()
 
-    # 2. GRÁFICOS AVANÇADOS
     g1, g2, g3 = st.columns([1.2, 1.5, 1.3])
 
     with g1:
@@ -581,7 +637,6 @@ with tabs[0]:
 
     st.divider()
 
-    # 3. PAINEL DE AÇÕES PRIORITÁRIAS
     st.markdown("### ⚠️ Matriz de Riscos Críticos e Ações em Atraso")
     df_urgente = df_filtrado[
         (df_filtrado["Severidade"].isin(["Crítica", "Alta"]))
@@ -641,93 +696,122 @@ with tabs[1]:
             inc_prazo = c_i8.date_input("Prazo Limite:")
 
             if st.form_submit_button("➕ Criar Registro"):
-                novo_id = f"AUD-{len(df) + 1:02d}"
-                novo_registro = pd.DataFrame(
-                    [
-                        {
-                            "ID": novo_id,
-                            "Cliente_Projeto": inc_proj,
-                            "Agencia": inc_ag,
-                            "Etapa_SIPOC": "Geral",
-                            "Categoria": "Compliance",
-                            "Achado": inc_achado,
-                            "Severidade": inc_sev,
-                            "Acao_Corretiva": inc_acao,
-                            "Area_Responsavel": inc_area,
-                            "Nome_Responsavel": inc_resp,
-                            "Email_Responsavel": inc_email,
-                            "Data_Inicio": str(inc_dt_inicio),
-                            "Prazo": str(inc_prazo),
-                            "Data_Conclusao": "-",
-                            "Status": "A Fazer",
-                            "Timeline_JSON": "[]",
-                        }
-                    ]
-                )
-                df_novo = pd.concat([df, novo_registro], ignore_index=True)
-                salvar_dados(df_novo)
-                registrar_log(
-                    user_info["Usuario"], "Inclusão", f"Criou {novo_id}"
-                )
-                st.success(f"Apontamento {novo_id} criado!")
-                st.rerun()
+                try:
+                    novo_id = f"AUD-{len(df) + 1:02d}"
+                    novo_registro = pd.DataFrame(
+                        [
+                            {
+                                "ID": novo_id,
+                                "Cliente_Projeto": inc_proj,
+                                "Agencia": inc_ag,
+                                "Etapa_SIPOC": "Geral",
+                                "Categoria": "Compliance",
+                                "Achado": inc_achado,
+                                "Severidade": inc_sev,
+                                "Acao_Corretiva": inc_acao,
+                                "Area_Responsavel": inc_area,
+                                "Nome_Responsavel": inc_resp,
+                                "Email_Responsavel": inc_email,
+                                "Data_Inicio": str(inc_dt_inicio),
+                                "Prazo": str(inc_prazo),
+                                "Data_Conclusao": "-",
+                                "Status": "A Fazer",
+                                "Timeline_JSON": "[]",
+                            }
+                        ]
+                    )
+                    df_novo = pd.concat([df, novo_registro], ignore_index=True)
+                    salvar_dados(df_novo)
+                    st.session_state["df_auditoria"] = df_novo
+                    registrar_log(
+                        user_info["Usuario"], "Inclusão", f"Criou {novo_id}"
+                    )
+                    st.success(f"Apontamento {novo_id} criado!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erro ao incluir novo projeto: {e}")
 
     with sub_t2:
-        proj_sel_ed = st.selectbox(
-            "Selecione o Projeto / Cliente:",
-            options=df["Cliente_Projeto"].unique(),
-        )
-        df_sub_ed = df[df["Cliente_Projeto"] == proj_sel_ed]
-
-        id_ed = st.selectbox(
-            "Apontamento Vinculado:", options=df_sub_ed["ID"].unique()
-        )
-        row_ed = df[df["ID"] == id_ed].iloc[0]
-
-        with st.form("form_ed_proj"):
-            ed_proj = st.text_input(
-                "Nome do Cliente / Projeto:", value=row_ed["Cliente_Projeto"]
+        if not df.empty:
+            proj_sel_ed = st.selectbox(
+                "Selecione o Projeto / Cliente:",
+                options=df["Cliente_Projeto"].unique(),
             )
-            ed_achado = st.text_area("Achado:", value=row_ed["Achado"])
-            ed_acao = st.text_area("Ação:", value=row_ed["Acao_Corretiva"])
+            df_sub_ed = df[df["Cliente_Projeto"] == proj_sel_ed]
 
-            c_e1, c_e2, c_e3 = st.columns(3)
-            ed_resp = c_e1.text_input(
-                "Responsável:", value=row_ed["Nome_Responsavel"]
+            id_ed = st.selectbox(
+                "Apontamento Vinculado:", options=df_sub_ed["ID"].unique()
             )
-            ed_dt_inicio = c_e2.text_input(
-                "Data Início:", value=str(row_ed.get("Data_Inicio", "-"))
-            )
-            ed_prazo = c_e3.text_input(
-                "Novo Prazo:", value=str(row_ed["Prazo"])
-            )
+            row_ed = df[df["ID"] == id_ed].iloc[0]
 
-            ed_status = st.selectbox(
-                "Status:",
-                ["A Fazer", "Em Andamento", "Em Validação", "Concluído", "Atrasado"],
-                index=["A Fazer", "Em Andamento", "Em Validação", "Concluído", "Atrasado"].index(
-                    row_ed["Status"]
-                    if row_ed["Status"]
-                    in ["A Fazer", "Em Andamento", "Em Validação", "Concluído", "Atrasado"]
-                    else "A Fazer"
-                ),
-            )
+            with st.form("form_ed_proj"):
+                ed_proj = st.text_input(
+                    "Nome do Cliente / Projeto:", value=row_ed["Cliente_Projeto"]
+                )
+                ed_achado = st.text_area("Achado:", value=row_ed["Achado"])
+                ed_acao = st.text_area("Ação:", value=row_ed["Acao_Corretiva"])
 
-            if st.form_submit_button("💾 Salvar Alterações"):
-                idx = df[df["ID"] == id_ed].index[0]
-                df.loc[idx, "Cliente_Projeto"] = ed_proj
-                df.loc[idx, "Achado"] = ed_achado
-                df.loc[idx, "Acao_Corretiva"] = ed_acao
-                df.loc[idx, "Nome_Responsavel"] = ed_resp
-                df.loc[idx, "Data_Inicio"] = ed_dt_inicio
-                df.loc[idx, "Prazo"] = ed_prazo
-                df.loc[idx, "Status"] = ed_status
-                if ed_status == "Concluído":
-                    df.loc[idx, "Data_Conclusao"] = str(datetime.date.today())
+                c_e1, c_e2, c_e3 = st.columns(3)
+                ed_resp = c_e1.text_input(
+                    "Responsável:", value=row_ed["Nome_Responsavel"]
+                )
+                ed_dt_inicio = c_e2.text_input(
+                    "Data Início:", value=str(row_ed.get("Data_Inicio", "-"))
+                )
+                ed_prazo = c_e3.text_input(
+                    "Novo Prazo:", value=str(row_ed["Prazo"])
+                )
 
-                salvar_dados(df)
-                st.success("Projeto atualizado!")
-                st.rerun()
+                ed_status = st.selectbox(
+                    "Status:",
+                    [
+                        "A Fazer",
+                        "Em Andamento",
+                        "Em Validação",
+                        "Concluído",
+                        "Atrasado",
+                    ],
+                    index=[
+                        "A Fazer",
+                        "Em Andamento",
+                        "Em Validação",
+                        "Concluído",
+                        "Atrasado",
+                    ].index(
+                        row_ed["Status"]
+                        if row_ed["Status"]
+                        in [
+                            "A Fazer",
+                            "Em Andamento",
+                            "Em Validação",
+                            "Concluído",
+                            "Atrasado",
+                        ]
+                        else "A Fazer"
+                    ),
+                )
+
+                if st.form_submit_button("💾 Salvar Alterações"):
+                    try:
+                        idx = df[df["ID"] == id_ed].index[0]
+                        df.loc[idx, "Cliente_Projeto"] = ed_proj
+                        df.loc[idx, "Achado"] = ed_achado
+                        df.loc[idx, "Acao_Corretiva"] = ed_acao
+                        df.loc[idx, "Nome_Responsavel"] = ed_resp
+                        df.loc[idx, "Data_Inicio"] = ed_dt_inicio
+                        df.loc[idx, "Prazo"] = ed_prazo
+                        df.loc[idx, "Status"] = ed_status
+                        if ed_status == "Concluído":
+                            df.loc[idx, "Data_Conclusao"] = str(
+                                datetime.date.today()
+                            )
+
+                        salvar_dados(df)
+                        st.session_state["df_auditoria"] = df
+                        st.success("Projeto atualizado!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao salvar edição: {e}")
 
 # ---------------------------------------------------------
 # TELA 3: CENTRAL DE PROJETOS (KANBAN OTIMIZADO)
@@ -805,15 +889,19 @@ with tabs[2]:
                         label_visibility="collapsed",
                     )
                     if st.button("🚀 Mover", key=f"btn_mv_c_{row['ID']}"):
-                        idx_k = df[df["ID"] == row["ID"]].index[0]
-                        st_logico = "Concluído" if "Concluído" in st_mudar else (
-                            "Em Validação" if "Validação" in st_mudar else (
-                                "Em Andamento" if "Andamento" in st_mudar else "A Fazer"
+                        try:
+                            idx_k = df[df["ID"] == row["ID"]].index[0]
+                            st_logico = "Concluído" if "Concluído" in st_mudar else (
+                                "Em Validação" if "Validação" in st_mudar else (
+                                    "Em Andamento" if "Andamento" in st_mudar else "A Fazer"
+                                )
                             )
-                        )
-                        df.loc[idx_k, "Status"] = st_logico
-                        salvar_dados(df)
-                        st.rerun()
+                            df.loc[idx_k, "Status"] = st_logico
+                            salvar_dados(df)
+                            st.session_state["df_auditoria"] = df
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao mover o cartão: {e}")
 
                 with c_btn2:
                     with st.popover("💬 Histórico"):
@@ -877,33 +965,37 @@ with tabs[2]:
                             key=f"btn_save_u_{row['ID']}",
                         ):
                             if txt_coment or file_coment:
-                                nome_anexo_salvo = None
-                                if file_coment is not None:
-                                    nome_anexo_salvo = f"{row['ID']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{file_coment.name}"
-                                    caminho = os.path.join(
-                                        PASTA_EVIDENCIAS, nome_anexo_salvo
+                                try:
+                                    nome_anexo_salvo = None
+                                    if file_coment is not None:
+                                        nome_anexo_salvo = f"{row['ID']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{file_coment.name}"
+                                        caminho = os.path.join(
+                                            PASTA_EVIDENCIAS, nome_anexo_salvo
+                                        )
+                                        with open(caminho, "wb") as f:
+                                            f.write(file_coment.getbuffer())
+
+                                    novo_item_timeline = {
+                                        "Data": datetime.datetime.now().strftime(
+                                            "%d/%m/%Y %H:%M"
+                                        ),
+                                        "Nome": user_info["Nome"],
+                                        "Usuario": user_info["Usuario"],
+                                        "Texto": txt_coment,
+                                        "Anexo": nome_anexo_salvo,
+                                    }
+                                    timeline.append(novo_item_timeline)
+
+                                    idx_k = df[df["ID"] == row["ID"]].index[0]
+                                    df.loc[idx_k, "Timeline_JSON"] = json.dumps(
+                                        timeline, ensure_ascii=False
                                     )
-                                    with open(caminho, "wb") as f:
-                                        f.write(file_coment.getbuffer())
-
-                                novo_item_timeline = {
-                                    "Data": datetime.datetime.now().strftime(
-                                        "%d/%m/%Y %H:%M"
-                                    ),
-                                    "Nome": user_info["Nome"],
-                                    "Usuario": user_info["Usuario"],
-                                    "Texto": txt_coment,
-                                    "Anexo": nome_anexo_salvo,
-                                }
-                                timeline.append(novo_item_timeline)
-
-                                idx_k = df[df["ID"] == row["ID"]].index[0]
-                                df.loc[idx_k, "Timeline_JSON"] = json.dumps(
-                                    timeline, ensure_ascii=False
-                                )
-                                salvar_dados(df)
-                                st.success("Registro efetuado!")
-                                st.rerun()
+                                    salvar_dados(df)
+                                    st.session_state["df_auditoria"] = df
+                                    st.success("Registro efetuado!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro ao salvar comentário: {e}")
 
 # ---------------------------------------------------------
 # TELA 4: MESTRE CENTRAL DE ANEXOS E HISTÓRICO
@@ -911,63 +1003,67 @@ with tabs[2]:
 with tabs[3]:
     st.markdown("### 📤 Central Mestre de Anexos & Histórico Auditável")
 
-    proj_sel_h = st.selectbox(
-        "📌 Selecione o Projeto / Cliente:",
-        options=df["Cliente_Projeto"].unique(),
-        key="sb_proj_h",
-    )
-    df_sub_h = df[df["Cliente_Projeto"] == proj_sel_h]
+    if not df.empty:
+        proj_sel_h = st.selectbox(
+            "📌 Selecione o Projeto / Cliente:",
+            options=df["Cliente_Projeto"].unique(),
+            key="sb_proj_h",
+        )
+        df_sub_h = df[df["Cliente_Projeto"] == proj_sel_h]
 
-    id_h = st.selectbox(
-        "Selecione o Apontamento:",
-        options=df_sub_h["ID"].unique(),
-        key="sb_id_h",
-    )
-    row_h = df[df["ID"] == id_h].iloc[0]
+        id_h = st.selectbox(
+            "Selecione o Apontamento:",
+            options=df_sub_h["ID"].unique(),
+            key="sb_id_h",
+        )
+        row_h = df[df["ID"] == id_h].iloc[0]
 
-    st.info(
-        f"**Projeto:** {row_h['Cliente_Projeto']} | **Achado:** {row_h['Achado']} | **Status:** {row_h['Status']}"
-    )
+        st.info(
+            f"**Projeto:** {row_h['Cliente_Projeto']} | **Achado:** {row_h['Achado']} | **Status:** {row_h['Status']}"
+        )
 
-    try:
-        timeline_mestre = json.loads(str(row_h.get("Timeline_JSON", "[]")))
-    except:
-        timeline_mestre = []
+        try:
+            timeline_mestre = json.loads(str(row_h.get("Timeline_JSON", "[]")))
+        except:
+            timeline_mestre = []
 
-    if len(timeline_mestre) == 0:
-        st.info("Nenhum histórico registrado para este projeto.")
-    else:
-        for t_item in timeline_mestre:
-            st.markdown(
-                f"""
-            <div class="comment-item">
-                <div class="comment-header">👤 {t_item['Nome']} ({t_item['Usuario']}) - 📅 {t_item['Data']}</div>
-                <div>{t_item['Texto']}</div>
-            </div>
-            """,
-                unsafe_allow_html=True,
-            )
-            if t_item.get("Anexo"):
-                p_m = os.path.join(PASTA_EVIDENCIAS, t_item["Anexo"])
-                if os.path.exists(p_m):
-                    st.write(f"📎 **Anexo Vinculado:** `{t_item['Anexo']}`")
-                    if t_item["Anexo"].lower().endswith(
-                        (".png", ".jpg", ".jpeg")
-                    ):
-                        st.image(p_m, use_container_width=True)
+        if len(timeline_mestre) == 0:
+            st.info("Nenhum histórico registrado para este projeto.")
+        else:
+            for t_item in timeline_mestre:
+                st.markdown(
+                    f"""
+                <div class="comment-item">
+                    <div class="comment-header">👤 {t_item['Nome']} ({t_item['Usuario']}) - 📅 {t_item['Data']}</div>
+                    <div>{t_item['Texto']}</div>
+                </div>
+                """,
+                    unsafe_allow_html=True,
+                )
+                if t_item.get("Anexo"):
+                    p_m = os.path.join(PASTA_EVIDENCIAS, t_item["Anexo"])
+                    if os.path.exists(p_m):
+                        st.write(f"📎 **Anexo Vinculado:** `{t_item['Anexo']}`")
+                        if t_item["Anexo"].lower().endswith(
+                            (".png", ".jpg", ".jpeg")
+                        ):
+                            st.image(p_m, use_container_width=True)
 
 # ---------------------------------------------------------
 # TELA 5: EXTRATOR DE RELATÓRIOS
 # ---------------------------------------------------------
 with tabs[4]:
     st.markdown("### 📥 Extrator Inteligente de Relatórios Executivos")
-    csv_data = df_filtrado.to_csv(index=False, sep=";").encode("utf-8-sig")
-    st.download_button(
-        label="📥 Download Relatório Formatado (CSV / Excel)",
-        data=csv_data,
-        file_name=f"Relatorio_Compliance_{datetime.date.today()}.csv",
-        mime="text/csv",
-    )
+    try:
+        csv_data = df_filtrado.to_csv(index=False, sep=";").encode("utf-8-sig")
+        st.download_button(
+            label="📥 Download Relatório Formatado (CSV / Excel)",
+            data=csv_data,
+            file_name=f"Relatorio_Compliance_{datetime.date.today()}.csv",
+            mime="text/csv",
+        )
+    except Exception as e:
+        st.error(f"Erro ao gerar relatório: {e}")
 
 # ---------------------------------------------------------
 # TELA 6: AUDITORIA MASTER
@@ -984,24 +1080,33 @@ if is_master:
             st.subheader("Aprovação e Níveis de Usuários")
             st.dataframe(df_u, use_container_width=True)
 
-            usr_aprovar = st.selectbox(
-                "Selecione Usuário para Editar:",
-                options=df_u["Usuario"].unique(),
-            )
-            c_st, c_nv = st.columns(2)
-            novo_st_u = c_st.selectbox("Status:", ["Ativo", "Pendente", "Bloqueado"])
-            novo_nv_u = c_nv.selectbox("Nível:", ["Gestor", "Master"])
+            if not df_u.empty:
+                usr_aprovar = st.selectbox(
+                    "Selecione Usuário para Editar:",
+                    options=df_u["Usuario"].unique(),
+                )
+                c_st, c_nv = st.columns(2)
+                novo_st_u = c_st.selectbox(
+                    "Status:", ["Ativo", "Pendente", "Bloqueado"]
+                )
+                novo_nv_u = c_nv.selectbox("Nível:", ["Gestor", "Master"])
 
-            if st.button("Atualizar Permissões"):
-                idx_u = df_u[df_u["Usuario"] == usr_aprovar].index[0]
-                df_u.loc[idx_u, "Status"] = novo_st_u
-                df_u.loc[idx_u, "Nivel"] = novo_nv_u
-                salvar_usuarios(df_u)
-                st.success("Permissões atualizadas!")
-                st.rerun()
+                if st.button("Atualizar Permissões"):
+                    try:
+                        idx_u = df_u[df_u["Usuario"] == usr_aprovar].index[0]
+                        df_u.loc[idx_u, "Status"] = novo_st_u
+                        df_u.loc[idx_u, "Nivel"] = novo_nv_u
+                        salvar_usuarios(df_u)
+                        st.success("Permissões atualizadas!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao atualizar permissões: {e}")
 
         with t_logs:
             st.subheader("Trilha de Auditoria do Sistema")
             if os.path.exists(ARQUIVO_LOGS):
-                df_l = pd.read_excel(ARQUIVO_LOGS)
-                st.dataframe(df_l, use_container_width=True)
+                try:
+                    df_l = pd.read_excel(ARQUIVO_LOGS, dtype=str)
+                    st.dataframe(df_l, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Erro ao carregar logs: {e}")
