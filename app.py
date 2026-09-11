@@ -7,6 +7,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+# FUSO HORÁRIO BRASIL (UTC-3)
+TZ_BR = datetime.timezone(datetime.timedelta(hours=-3))
+
+def get_now_br():
+    return datetime.datetime.now(TZ_BR)
+
 # 1. CONFIGURAÇÃO DA PÁGINA E CSS EXECUTIVO PREMIUM
 st.set_page_config(
     page_title="Platform Governance & Compliance | Maringá Turismo",
@@ -33,7 +39,7 @@ st.markdown(
     .kpi-value { font-size: 1.8rem; font-weight: 800; color: #0f172a; margin-top: 4px; }
     .kpi-subtext { font-size: 0.75rem; color: #10b981; font-weight: 600; margin-top: 2px; }
 
-    /* Estilização Refinada dos Cartões Kanban */
+    /* Cartões Kanban */
     .kanban-box {
         background-color: #ffffff;
         border: 1px solid #cbd5e1;
@@ -69,7 +75,7 @@ st.markdown(
         border: 1px solid #e2e8f0;
         border-left: 4px solid #0284c7;
         padding: 12px 14px;
-        margin-bottom: 10px;
+        margin-bottom: 8px;
         border-radius: 8px;
         font-size: 0.88rem;
     }
@@ -132,7 +138,7 @@ def extrair_data_ultima_acao(json_str, data_inicio_fallback):
 
 def registrar_log(usuario, acao, detalhe):
     try:
-        data_hora = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        data_hora = get_now_br().strftime("%d/%m/%Y %H:%M:%S")
         novo_log = pd.DataFrame(
             [
                 {
@@ -306,8 +312,8 @@ def carregar_dados():
             "Etapa_SIPOC": "Geral",
             "Status": "A Fazer",
             "Severidade": "Média",
-            "Data_Inicio": str(datetime.date.today()),
-            "Prazo": str(datetime.date.today()),
+            "Data_Inicio": str(get_now_br().date()),
+            "Prazo": str(get_now_br().date()),
             "Data_Conclusao": "-",
             "Timeline_JSON": "[]",
         }
@@ -332,14 +338,18 @@ def carregar_dados():
 
 def salvar_dados(dataframe):
     try:
-        if "Timeline_JSON" in dataframe.columns:
-            dataframe["Ultima_Acao"] = dataframe.apply(
+        df_salvar = dataframe.copy()
+        if "Timeline_JSON" in df_salvar.columns:
+            df_salvar["Ultima_Acao"] = df_salvar.apply(
                 lambda r: extrair_data_ultima_acao(
                     r.get("Timeline_JSON", "[]"), r.get("Data_Inicio", "-")
                 ),
                 axis=1,
             )
-        dataframe.to_excel(ARQUIVO_MATRIZ, index=False)
+        for col in df_salvar.columns:
+            df_salvar[col] = df_salvar[col].astype(str)
+
+        df_salvar.to_excel(ARQUIVO_MATRIZ, index=False)
     except Exception as e:
         st.error(f"Erro ao salvar alterações da matriz: {e}")
 
@@ -563,7 +573,7 @@ if is_master:
 tabs = st.tabs(abas)
 
 # ---------------------------------------------------------
-# RENDERIZAÇÃO DO POPUP / MODAL (SOLUÇÃO DE FECHAMENTO GARANTIDO SEM CONFLITOS)
+# PAINEL MODAL DE DETALHES (COM EDIÇÃO DE COMENTÁRIO EXCLUSIVA DO AUTOR)
 # ---------------------------------------------------------
 if (
     "id_modal_aberto" in st.session_state
@@ -581,7 +591,6 @@ if (
             c_head1.markdown(
                 f"## 📋 Detalhes do Apontamento #{row_item['ID']} — {row_item['Cliente_Projeto']}"
             )
-            # BOTÃO DE FECHAMENTO DIRETO QUE LIMPA O ESTADO E ATUALIZA A TELA NA HORA
             if c_head2.button("❌ FECHAR", type="primary", key="btn_close_modal_direct"):
                 st.session_state["id_modal_aberto"] = None
                 st.rerun()
@@ -606,6 +615,8 @@ if (
             if not timeline:
                 st.caption("Nenhum comentário ou evidência anexada até o momento.")
             else:
+                usuario_atual = user_info["Usuario"]
+
                 for idx_t, item in enumerate(timeline):
                     st.markdown(
                         f"""
@@ -616,6 +627,25 @@ if (
                     """,
                         unsafe_allow_html=True,
                     )
+
+                    # EDITAR COMENTÁRIO - SOMENTE PARA O AUTOR OU MASTER
+                    if item.get("Usuario") == usuario_atual or is_master:
+                        with st.expander(f"✏️ Editar Comentário #{idx_t + 1}"):
+                            novo_txt_edit = st.text_area(
+                                "Editar texto do comentário:",
+                                value=item["Texto"],
+                                key=f"edt_txt_{row_item['ID']}_{idx_t}"
+                            )
+                            if st.button("💾 Salvar Edição de Comentário", key=f"btn_edt_c_{row_item['ID']}_{idx_t}"):
+                                timeline[idx_t]["Texto"] = novo_txt_edit
+                                idx_k = df[df["ID"] == row_item["ID"]].index[0]
+                                df.loc[idx_k, "Timeline_JSON"] = json.dumps(timeline, ensure_ascii=False)
+                                salvar_dados(df)
+                                st.session_state["df_auditoria"] = df
+                                registrar_log(usuario_atual, "Edição Comentário", f"Editou comentário #{idx_t + 1} no {row_item['ID']}")
+                                st.success("Comentário atualizado!")
+                                st.rerun()
+
                     if item.get("Anexo"):
                         renderizar_anexo_elemento(
                             item["Anexo"], key_prefix=f"mdl_{row_item['ID']}_{idx_t}"
@@ -636,13 +666,13 @@ if (
                     try:
                         nome_anexo = None
                         if file_coment is not None:
-                            nome_anexo = f"{row_item['ID']}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{file_coment.name}"
+                            nome_anexo = f"{row_item['ID']}_{get_now_br().strftime('%Y%m%d_%H%M%S')}_{file_coment.name}"
                             caminho = os.path.join(PASTA_EVIDENCIAS, nome_anexo)
                             with open(caminho, "wb") as f:
                                 f.write(file_coment.getbuffer())
 
                         novo_item = {
-                            "Data": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
+                            "Data": get_now_br().strftime("%d/%m/%Y %H:%M"),
                             "Nome": user_info["Nome"],
                             "Usuario": user_info["Usuario"],
                             "Texto": txt_coment,
@@ -657,6 +687,7 @@ if (
                         salvar_dados(df)
                         st.session_state["df_auditoria"] = df
                         st.session_state["form_counter"] += 1
+                        registrar_log(user_info["Usuario"], "Novo Histórico", f"Adicionou comentário em {row_item['ID']}")
                         st.success("Histórico atualizado com sucesso!")
                         st.rerun()
                     except Exception as e:
@@ -678,6 +709,7 @@ if (
                         salvar_dados(df_novo)
                         st.session_state["df_auditoria"] = df_novo
                         st.session_state["id_modal_aberto"] = None
+                        registrar_log(user_info["Usuario"], "Exclusão Apontamento", f"Excluiu apontamento {row_item['ID']}")
                         st.success("Projeto excluído com sucesso!")
                         st.rerun()
                     except Exception as e:
@@ -911,10 +943,11 @@ with tabs[0]:
             st.rerun()
 
 # ---------------------------------------------------------
-# TELA 2: OPERAÇÕES E GESTÃO DE PROJETOS (CRUD)
+# TELA 2: OPERAÇÕES E GESTÃO DE PROJETOS (INCLUSÃO / EDIÇÃO / EXCLUSÃO EXCLUSIVAS)
 # ---------------------------------------------------------
 with tabs[1]:
     st.markdown("### ⚙️ Gestão de Projetos e Apontamentos")
+    st.caption("Ações diretas de Abertura, Modificação e Exclusão de Apontamentos de Auditoria.")
 
     sub_t1, sub_t2, sub_t3 = st.tabs(
         [
@@ -925,69 +958,70 @@ with tabs[1]:
     )
 
     with sub_t1:
-        with st.form("form_inc_proj"):
+        st.markdown("##### ➕ Formulario de Abertura de Apontamento")
+        with st.form("form_inc_proj_novo", clear_on_submit=True):
             c_i1, c_i2 = st.columns(2)
-            inc_proj = c_i1.text_input(
-                "Nome do Cliente / Projeto:", value="Cliente Corporativo"
-            )
+            inc_proj = c_i1.text_input("Nome do Cliente / Projeto:")
             inc_ag = c_i2.text_input("Unidade / Agência:", value="São Paulo - HQ")
 
             inc_achado = st.text_area("Descrição do Achado / Desvio:")
             inc_acao = st.text_area("Ação Corretiva Recomendada:")
 
             c_i3, c_i4, c_i5 = st.columns(3)
-            inc_sev = c_i3.selectbox(
-                "Severidade:", ["Baixa", "Média", "Alta", "Crítica"]
-            )
+            inc_sev = c_i3.selectbox("Severidade:", ["Baixa", "Média", "Alta", "Crítica"])
             inc_area = c_i4.text_input("Área Responsável:", value="Operações")
             inc_resp = c_i5.text_input("Nome do Responsável:")
 
             c_i6, c_i7, c_i8 = st.columns(3)
             inc_email = c_i6.text_input("E-mail do Responsável:")
-            inc_dt_inicio = c_i7.date_input("Data de Início:", format="DD/MM/YYYY")
-            inc_prazo = c_i8.date_input("Prazo Limite:", format="DD/MM/YYYY")
+            inc_dt_inicio = c_i7.date_input("Data de Início:", value=get_now_br().date(), format="DD/MM/YYYY")
+            inc_prazo = c_i8.date_input("Prazo Limite:", value=get_now_br().date() + datetime.timedelta(days=15), format="DD/MM/YYYY")
 
-            if st.form_submit_button("➕ Criar Registro"):
-                try:
-                    novo_id = f"AUD-{len(df) + 1:02d}"
-                    novo_registro = pd.DataFrame(
-                        [
-                            {
-                                "ID": novo_id,
-                                "Cliente_Projeto": inc_proj,
-                                "Agencia": inc_ag,
-                                "Etapa_SIPOC": "Geral",
-                                "Categoria": "Compliance",
-                                "Achado": inc_achado,
-                                "Severidade": inc_sev,
-                                "Acao_Corretiva": inc_acao,
-                                "Area_Responsavel": inc_area,
-                                "Nome_Responsavel": inc_resp,
-                                "Email_Responsavel": inc_email,
-                                "Data_Inicio": str(inc_dt_inicio),
-                                "Prazo": str(inc_prazo),
-                                "Data_Conclusao": "-",
-                                "Status": "A Fazer",
-                                "Timeline_JSON": "[]",
-                                "Ultima_Acao": formatar_data_br(inc_dt_inicio),
-                            }
-                        ]
-                    )
-                    df_novo = pd.concat([df, novo_registro], ignore_index=True)
-                    salvar_dados(df_novo)
-                    st.session_state["df_auditoria"] = df_novo
-                    registrar_log(
-                        user_info["Usuario"], "Inclusão", f"Criou {novo_id}"
-                    )
-                    st.success(f"Apontamento {novo_id} criado!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Erro ao incluir novo projeto: {e}")
+            if st.form_submit_button("➕ Criar Registro Definitivo"):
+                if not inc_proj or not inc_achado:
+                    st.error("Por favor, preencha o Nome do Projeto e o Achado.")
+                else:
+                    try:
+                        novo_id = f"AUD-{len(df) + 1:02d}"
+                        data_inicio_str = inc_dt_inicio.strftime("%Y-%m-%d")
+                        prazo_str = inc_prazo.strftime("%Y-%m-%d")
+
+                        novo_registro = pd.DataFrame(
+                            [
+                                {
+                                    "ID": str(novo_id),
+                                    "Cliente_Projeto": str(inc_proj),
+                                    "Agencia": str(inc_ag),
+                                    "Etapa_SIPOC": "Geral",
+                                    "Categoria": "Compliance",
+                                    "Achado": str(inc_achado),
+                                    "Severidade": str(inc_sev),
+                                    "Acao_Corretiva": str(inc_acao),
+                                    "Area_Responsavel": str(inc_area),
+                                    "Nome_Responsavel": str(inc_resp),
+                                    "Email_Responsavel": str(inc_email),
+                                    "Data_Inicio": data_inicio_str,
+                                    "Prazo": prazo_str,
+                                    "Data_Conclusao": "-",
+                                    "Status": "A Fazer",
+                                    "Timeline_JSON": "[]",
+                                    "Ultima_Acao": formatar_data_br(data_inicio_str),
+                                }
+                            ]
+                        )
+                        df_novo = pd.concat([df, novo_registro], ignore_index=True)
+                        salvar_dados(df_novo)
+                        st.session_state["df_auditoria"] = df_novo
+                        registrar_log(user_info["Usuario"], "Inclusão", f"Criou o apontamento {novo_id}")
+                        st.success(f"Apontamento {novo_id} criado com sucesso!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao incluir novo projeto: {e}")
 
     with sub_t2:
         if not df.empty:
             proj_sel_ed = st.selectbox(
-                "Selecione o Projeto / Cliente:",
+                "Selecione o Projeto / Cliente para Editar:",
                 options=df["Cliente_Projeto"].unique(),
                 key="sb_ed_proj",
             )
@@ -999,70 +1033,40 @@ with tabs[1]:
             row_ed = df[df["ID"] == id_ed].iloc[0]
 
             with st.form("form_ed_proj"):
-                ed_proj = st.text_input(
-                    "Nome do Cliente / Projeto:", value=row_ed["Cliente_Projeto"]
-                )
+                ed_proj = st.text_input("Nome do Cliente / Projeto:", value=row_ed["Cliente_Projeto"])
                 ed_achado = st.text_area("Achado:", value=row_ed["Achado"])
                 ed_acao = st.text_area("Ação:", value=row_ed["Acao_Corretiva"])
 
                 c_e1, c_e2, c_e3 = st.columns(3)
-                ed_resp = c_e1.text_input(
-                    "Responsável:", value=row_ed["Nome_Responsavel"]
-                )
-                ed_dt_inicio = c_e2.text_input(
-                    "Data Início (YYYY-MM-DD):", value=str(row_ed.get("Data_Inicio", "-"))
-                )
-                ed_prazo = c_e3.text_input(
-                    "Novo Prazo (YYYY-MM-DD):", value=str(row_ed["Prazo"])
-                )
+                ed_resp = c_e1.text_input("Responsável:", value=row_ed["Nome_Responsavel"])
+                ed_dt_inicio = c_e2.text_input("Data Início (YYYY-MM-DD):", value=str(row_ed.get("Data_Inicio", "-")))
+                ed_prazo = c_e3.text_input("Novo Prazo (YYYY-MM-DD):", value=str(row_ed["Prazo"]))
 
                 ed_status = st.selectbox(
                     "Status:",
-                    [
-                        "A Fazer",
-                        "Em Andamento",
-                        "Em Validação",
-                        "Concluído",
-                        "Atrasado",
-                    ],
-                    index=[
-                        "A Fazer",
-                        "Em Andamento",
-                        "Em Validação",
-                        "Concluído",
-                        "Atrasado",
-                    ].index(
-                        row_ed["Status"]
-                        if row_ed["Status"]
-                        in [
-                            "A Fazer",
-                            "Em Andamento",
-                            "Em Validação",
-                            "Concluído",
-                            "Atrasado",
-                        ]
-                        else "A Fazer"
+                    ["A Fazer", "Em Andamento", "Em Validação", "Concluído", "Atrasado"],
+                    index=["A Fazer", "Em Andamento", "Em Validação", "Concluído", "Atrasado"].index(
+                        row_ed["Status"] if row_ed["Status"] in ["A Fazer", "Em Andamento", "Em Validação", "Concluído", "Atrasado"] else "A Fazer"
                     ),
                 )
 
                 if st.form_submit_button("💾 Salvar Alterações"):
                     try:
                         idx = df[df["ID"] == id_ed].index[0]
-                        df.loc[idx, "Cliente_Projeto"] = ed_proj
-                        df.loc[idx, "Achado"] = ed_achado
-                        df.loc[idx, "Acao_Corretiva"] = ed_acao
-                        df.loc[idx, "Nome_Responsavel"] = ed_resp
-                        df.loc[idx, "Data_Inicio"] = ed_dt_inicio
-                        df.loc[idx, "Prazo"] = ed_prazo
-                        df.loc[idx, "Status"] = ed_status
+                        df.loc[idx, "Cliente_Projeto"] = str(ed_proj)
+                        df.loc[idx, "Achado"] = str(ed_achado)
+                        df.loc[idx, "Acao_Corretiva"] = str(ed_acao)
+                        df.loc[idx, "Nome_Responsavel"] = str(ed_resp)
+                        df.loc[idx, "Data_Inicio"] = str(ed_dt_inicio)
+                        df.loc[idx, "Prazo"] = str(ed_prazo)
+                        df.loc[idx, "Status"] = str(ed_status)
                         if ed_status == "Concluído":
-                            df.loc[idx, "Data_Conclusao"] = str(
-                                datetime.date.today()
-                            )
+                            df.loc[idx, "Data_Conclusao"] = str(get_now_br().date())
 
                         salvar_dados(df)
                         st.session_state["df_auditoria"] = df
-                        st.success("Projeto atualizado!")
+                        registrar_log(user_info["Usuario"], "Edição Apontamento", f"Editou o apontamento {id_ed}")
+                        st.success("Projeto atualizado com sucesso!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao salvar edição: {e}")
@@ -1076,29 +1080,16 @@ with tabs[1]:
                 key="sb_del_proj",
             )
             df_sub_del = df[df["Cliente_Projeto"] == proj_sel_del]
-            id_del = st.selectbox(
-                "ID do Apontamento:",
-                options=df_sub_del["ID"].unique(),
-                key="sb_del_id",
-            )
+            id_del = st.selectbox("ID do Apontamento:", options=df_sub_del["ID"].unique(), key="sb_del_id")
 
-            chk_crud_del = st.checkbox(
-                "Confirmo que desejo apagar permanentemente este projeto do banco de dados.",
-                key="chk_crud_del",
-            )
+            chk_crud_del = st.checkbox("Confirmo que desejo apagar permanentemente este projeto do banco de dados.", key="chk_crud_del")
 
-            if st.button(
-                "🗑️ CONFIRMAR EXCLUSÃO DO PROJETO",
-                type="primary",
-                disabled=not chk_crud_del,
-            ):
+            if st.button("🗑️ CONFIRMAR EXCLUSÃO DO PROJETO", type="primary", disabled=not chk_crud_del):
                 try:
                     df_novo = df[df["ID"] != id_del].copy()
                     salvar_dados(df_novo)
                     st.session_state["df_auditoria"] = df_novo
-                    registrar_log(
-                        user_info["Usuario"], "Exclusão", f"Excluiu ID {id_del}"
-                    )
+                    registrar_log(user_info["Usuario"], "Exclusão Apontamento", f"Excluiu o apontamento {id_del}")
                     st.success(f"Apontamento {id_del} excluído com sucesso!")
                     st.rerun()
                 except Exception as e:
@@ -1222,13 +1213,12 @@ with tabs[2]:
                         st.rerun()
 
 # ---------------------------------------------------------
-# TELA 4: MESTRE CENTRAL DE ANEXOS (GALERIA DOCUMENTAL E REPOSITÓRIO FÍSICO)
+# TELA 4: MESTRE CENTRAL DE ANEXOS
 # ---------------------------------------------------------
 with tabs[3]:
     st.markdown("### 📤 Mestre Central de Anexos & Repositório Documental")
     st.caption("Centralização inteligente e auditoria visual de todas as evidências anexadas no sistema.")
 
-    # MÉTICAS DO REPOSITÓRIO
     lista_arquivos_servidor = [f for f in os.listdir(PASTA_EVIDENCIAS) if os.path.isfile(os.path.join(PASTA_EVIDENCIAS, f))]
     total_anexos_count = len(lista_arquivos_servidor)
     tamanho_total_mb = sum([os.path.getsize(os.path.join(PASTA_EVIDENCIAS, f)) for f in lista_arquivos_servidor]) / (1024 * 1024) if total_anexos_count > 0 else 0
@@ -1281,7 +1271,7 @@ with tabs[3]:
             idx_c += 1
 
 # ---------------------------------------------------------
-# TELA 5: EXTRATOR DE RELATÓRIOS (AUDITORIA DE SLA & LEAD TIME DE GOVERNANÇA)
+# TELA 5: EXTRATOR DE RELATÓRIOS
 # ---------------------------------------------------------
 with tabs[4]:
     st.markdown("### 📥 Extrator Inteligente & Análise de SLA de Governança")
@@ -1318,13 +1308,14 @@ with tabs[4]:
 
     st.divider()
 
-    # CÁLCULO DE SLA E LEAD TIME DIVERSIFICADO
     if not df_rel.empty:
         df_sla = df_rel.copy()
         df_sla["dt_inicio_parsed"] = pd.to_datetime(df_sla["Data_Inicio"], errors="coerce")
         df_sla["dt_prazo_parsed"] = pd.to_datetime(df_sla["Prazo"], errors="coerce")
-        df_sla["Dias_Corridos"] = (pd.to_datetime("today") - df_sla["dt_inicio_parsed"]).dt.days
-        df_sla["Dias_Para_Vencer"] = (df_sla["dt_prazo_parsed"] - pd.to_datetime("today")).dt.days
+        now_br_dt = pd.to_datetime(get_now_br().strftime("%Y-%m-%d"))
+        
+        df_sla["Dias_Corridos"] = (now_br_dt - df_sla["dt_inicio_parsed"]).dt.days
+        df_sla["Dias_Para_Vencer"] = (df_sla["dt_prazo_parsed"] - now_br_dt).dt.days
 
         st.markdown("#### 📊 Painel de Desempenho e Matriz de SLA do Projeto")
 
@@ -1348,7 +1339,6 @@ with tabs[4]:
         ]
         st.dataframe(df_sla[cols_sla_render], use_container_width=True)
 
-    # EXPORTAÇÃO EXCEL MULTI-ABAS
     def gerar_excel_relatorio_cascata(df_export):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -1369,26 +1359,45 @@ with tabs[4]:
         st.download_button(
             label="📊 Exportar Relatório Executivo Analítico em Excel (.xlsx)",
             data=excel_bytes,
-            file_name=f"Relatorio_Executivo_Compliance_{datetime.date.today().strftime('%d_%m_%Y')}.xlsx",
+            file_name=f"Relatorio_Executivo_Compliance_{get_now_br().strftime('%d_%m_%Y')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
     except Exception as e:
         st.error(f"Erro ao gerar planilha Excel: {e}")
 
 # ---------------------------------------------------------
-# TELA 6: AUDITORIA MASTER
+# TELA 6: AUDITORIA MASTER REFORMULADA (SEM DUPLICIDADES DE REGISTRO)
 # ---------------------------------------------------------
 if is_master:
     with tabs[5]:
-        st.markdown("### 🛡️ Administração de Acessos & Logs do Sistema")
+        st.markdown("### 🛡️ Central Master de Auditoria de Sistema & Logs de Rastreabilidade")
+        st.caption("Visão exclusiva de governança de TI, controle de privilégios de acesso e histórico completo de auditoria do sistema.")
+
+        df_logs_all = pd.DataFrame()
+        if os.path.exists(ARQUIVO_LOGS):
+            try:
+                df_logs_all = pd.read_excel(ARQUIVO_LOGS, dtype=str)
+            except:
+                pass
+
+        total_logs = len(df_logs_all)
+        total_exclusoes = len(df_logs_all[df_logs_all["Acao"].astype(str).str.contains("Exclusão", case=False, na=False)]) if not df_logs_all.empty else 0
+        total_edicoes = len(df_logs_all[df_logs_all["Acao"].astype(str).str.contains("Edição|Troca", case=False, na=False)]) if not df_logs_all.empty else 0
+
+        a1, a2, a3 = st.columns(3)
+        a1.metric("📜 Total de Interações Registradas", f"{total_logs} Eventos")
+        a2.metric("⚠️ Exclusões Críticas Efetuadas", f"{total_exclusoes} Ações")
+        a3.metric("✏️ Alterações de Registros", f"{total_edicoes} Operações")
+
+        st.divider()
+
         t_acessos, t_logs = st.tabs(
-            ["👥 Gestão de Acessos", "📜 Trilha de Auditoria (Logs)"]
+            ["👥 Níveis de Acesso & Privilégios", "📜 Trilha Auditável Completa de Logs"]
         )
         df_u = carregar_usuarios()
 
         with t_acessos:
-            st.subheader("Aprovação e Níveis de Usuários")
-
+            st.markdown("##### 🔑 Gerenciamento de Privilégios e Aprovação de Usuários")
             df_u_exibicao = df_u.copy()
             if "Senha" in df_u_exibicao.columns:
                 df_u_exibicao["Senha"] = "••••••••"
@@ -1396,37 +1405,37 @@ if is_master:
             st.dataframe(df_u_exibicao, use_container_width=True)
 
             if not df_u.empty:
-                usr_aprovar = st.selectbox(
-                    "Selecione Usuário para Editar Permissões / Status:",
-                    options=df_u["Usuario"].unique(),
-                )
-                c_st, c_nv = st.columns(2)
-                novo_st_u = c_st.selectbox(
-                    "Status:", ["Ativo", "Pendente", "Bloqueado"]
-                )
-                novo_nv_u = c_nv.selectbox("Nível:", ["Gestor", "Master"])
+                st.markdown("##### ⚙️ Alterar Nível de Acesso ou Status de Usuário")
+                c_u1, c_u2, c_u3 = st.columns(3)
+                usr_aprovar = c_u1.selectbox("Usuário:", options=df_u["Usuario"].unique())
+                novo_st_u = c_u2.selectbox("Novo Status:", ["Ativo", "Pendente", "Bloqueado"])
+                novo_nv_u = c_u3.selectbox("Novo Nível:", ["Gestor", "Master"])
 
-                if st.button("Atualizar Permissões"):
+                if st.button("💾 Confirmar Atualização de Acesso"):
                     try:
                         idx_u = df_u[df_u["Usuario"] == usr_aprovar].index[0]
                         df_u.loc[idx_u, "Status"] = novo_st_u
                         df_u.loc[idx_u, "Nivel"] = novo_nv_u
                         salvar_usuarios(df_u)
-                        registrar_log(
-                            user_info["Usuario"],
-                            "Gestão Acessos",
-                            f"Alterou {usr_aprovar} para {novo_st_u}/{novo_nv_u}",
-                        )
-                        st.success("Permissões atualizadas!")
+                        registrar_log(user_info["Usuario"], "Gestão Acessos", f"Alterou privilégios do usuário {usr_aprovar} para {novo_st_u}/{novo_nv_u}")
+                        st.success("Permissões de usuário atualizadas com sucesso!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao atualizar permissões: {e}")
 
         with t_logs:
-            st.subheader("Trilha de Auditoria do Sistema")
-            if os.path.exists(ARQUIVO_LOGS):
-                try:
-                    df_l = pd.read_excel(ARQUIVO_LOGS, dtype=str)
-                    st.dataframe(df_l, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Erro ao carregar logs: {e}")
+            st.markdown("##### 📜 Filtro Avançado da Trilha Auditável de Sistema")
+            if df_logs_all.empty:
+                st.info("Nenhum log de auditoria registrado no sistema até o momento.")
+            else:
+                c_fl1, c_fl2 = st.columns(2)
+                filtro_usr_log = c_fl1.selectbox("Filtrar por Usuário:", options=["Todos"] + list(df_logs_all["Usuario"].unique()))
+                filtro_acao_log = c_fl2.selectbox("Filtrar por Tipo de Ação:", options=["Todas"] + list(df_logs_all["Acao"].unique()))
+
+                df_logs_filtrado = df_logs_all.copy()
+                if filtro_usr_log != "Todos":
+                    df_logs_filtrado = df_logs_filtrado[df_logs_filtrado["Usuario"] == filtro_usr_log]
+                if filtro_acao_log != "Todas":
+                    df_logs_filtrado = df_logs_filtrado[df_logs_filtrado["Acao"] == filtro_acao_log]
+
+                st.dataframe(df_logs_filtrado, use_container_width=True)
