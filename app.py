@@ -106,7 +106,10 @@ def registrar_log(usuario, acao, detalhe):
 
 def carregar_usuarios():
     if os.path.exists(ARQUIVO_USUARIOS):
-        return pd.read_excel(ARQUIVO_USUARIOS)
+        # dtype=str força todas as colunas (especialmente Senha) a serem texto
+        df_u = pd.read_excel(ARQUIVO_USUARIOS, dtype=str)
+        df_u["Senha"] = df_u["Senha"].astype(str)
+        return df_u
     else:
         usuarios_default = pd.DataFrame(
             [
@@ -126,11 +129,13 @@ def carregar_usuarios():
                 },
             ]
         )
+        usuarios_default["Senha"] = usuarios_default["Senha"].astype(str)
         usuarios_default.to_excel(ARQUIVO_USUARIOS, index=False)
         return usuarios_default
 
 
 def salvar_usuarios(df_u):
+    df_u["Senha"] = df_u["Senha"].astype(str)
     df_u.to_excel(ARQUIVO_USUARIOS, index=False)
 
 
@@ -273,8 +278,8 @@ if not st.session_state["autenticado"]:
             pwd = st.text_input("Senha:", type="password")
             if st.form_submit_button("Entrar no Sistema"):
                 match = df_users[
-                    (df_users["Usuario"] == usr)
-                    & (df_users["Senha"].astype(str) == pwd)
+                    (df_users["Usuario"].astype(str) == str(usr))
+                    & (df_users["Senha"].astype(str) == str(pwd))
                 ]
                 if len(match) > 0:
                     if match.iloc[0]["Status"] == "Ativo":
@@ -299,8 +304,8 @@ if not st.session_state["autenticado"]:
                     novo_row = pd.DataFrame(
                         [
                             {
-                                "Usuario": novo_usr,
-                                "Senha": nova_pwd,
+                                "Usuario": str(novo_usr),
+                                "Senha": str(nova_pwd),
                                 "Nome": novo_nome,
                                 "Nivel": "Gestor",
                                 "Status": "Pendente",
@@ -329,17 +334,17 @@ with st.sidebar.popover("🔑 Trocar Minha Senha"):
     if st.button("Confirmar Alteração"):
         df_u = carregar_usuarios()
 
-        # CONVERSÃO DE TIPO: Garante que a coluna de senha seja tratada como texto/string
-        df_u["Senha"] = df_u["Senha"].astype(str)
+        # Garante tipo objeto/string para evitar erro do pandas dtype
+        df_u["Senha"] = df_u["Senha"].astype(object)
 
-        # Localiza o usuário atual
-        match_usr = df_u[df_u["Usuario"] == user_info["Usuario"]]
-
-        if not match_usr.empty:
-            idx_u = match_usr.index[0]
-            # Compara a senha digitada convertida com a senha armazenada
+        # Busca pelo usuário
+        mask = df_u["Usuario"].astype(str) == str(user_info["Usuario"])
+        
+        if mask.any():
+            idx_u = df_u[mask].index[0]
             if str(df_u.loc[idx_u, "Senha"]) == str(senha_atual):
-                df_u.loc[idx_u, "Senha"] = str(nova_senha)
+                # Atualização segura convertendo para string
+                df_u.at[idx_u, "Senha"] = str(nova_senha)
                 salvar_usuarios(df_u)
                 registrar_log(
                     user_info["Usuario"],
@@ -486,7 +491,7 @@ with tabs[0]:
 
     st.divider()
 
-    # 2. GRÁFICOS AVANÇADOS (LINHA 1)
+    # 2. GRÁFICOS AVANÇADOS
     g1, g2, g3 = st.columns([1.2, 1.5, 1.3])
 
     with g1:
@@ -576,7 +581,7 @@ with tabs[0]:
 
     st.divider()
 
-    # 3. PAINEL DE AÇÕES PRIORITÁRIAS QUE EXIGEM DECISÃO
+    # 3. PAINEL DE AÇÕES PRIORITÁRIAS
     st.markdown("### ⚠️ Matriz de Riscos Críticos e Ações em Atraso")
     df_urgente = df_filtrado[
         (df_filtrado["Severidade"].isin(["Crítica", "Alta"]))
