@@ -324,7 +324,6 @@ def carregar_dados():
 
         df_base["Status"] = df_base["Status"].replace({"Congos": "Concluído"})
 
-        # Recalcula Última Ação
         df_base["Ultima_Acao"] = df_base.apply(
             lambda r: extrair_data_ultima_acao(
                 r.get("Timeline_JSON", "[]"), r.get("Data_Inicio", "-")
@@ -352,7 +351,6 @@ def salvar_dados(dataframe):
         st.error(f"Erro ao salvar alterações da matriz: {e}")
 
 
-# HELPER FUNCTION PARA RENDERIZAR ANEXOS E BOTÃO DE DOWNLOAD
 def renderizar_anexo_elemento(nome_anexo, key_prefix):
     if not nome_anexo or str(nome_anexo).strip() in ["None", "null", ""]:
         return
@@ -361,11 +359,9 @@ def renderizar_anexo_elemento(nome_anexo, key_prefix):
     if os.path.exists(caminho):
         st.markdown(f"📎 **Anexo Registrado:** `{nome_anexo}`")
 
-        # Se for imagem, exibe inline
         if str(nome_anexo).lower().endswith((".png", ".jpg", ".jpeg")):
             st.image(caminho, use_container_width=True)
 
-        # Para TODOS os arquivos (PDF, imagens, docs), disponibiliza o botão de Download
         with open(caminho, "rb") as file_data:
             st.download_button(
                 label=f"📥 Download Anexo ({nome_anexo.split('.')[-1].upper()})",
@@ -521,9 +517,10 @@ if "colunas_kanban_custom" not in st.session_state:
         "Concluído",
     ]
 
-# ---------------------------------------------------------
-# FILTROS PRINCIPAIS NA SIDEBAR (DATA DE/ATÉ SIMPLIFICADA)
-# ---------------------------------------------------------
+if "form_counter" not in st.session_state:
+    st.session_state["form_counter"] = 0
+
+# FILTROS NA SIDEBAR
 st.sidebar.divider()
 st.sidebar.title("🔍 Filtros Gerais")
 
@@ -534,7 +531,6 @@ projeto_selecionado = st.sidebar.selectbox(
     "📌 Projeto / Cliente:", options=projetos_disponiveis
 )
 
-# FILTRO 2: FILTRO DE DATA SIMPLIFICADO DE / ATÉ
 st.sidebar.write("📅 **Período de Emissão (Data Inicial):**")
 c_sb1, c_sb2 = st.sidebar.columns(2)
 dt_ini_sb = c_sb1.date_input(
@@ -575,18 +571,27 @@ tabs = st.tabs(abas)
 
 
 # ---------------------------------------------------------
-# MODAL / DIALOG DE DETALHES COM VISUALIZAÇÃO/DOWNLOAD DE ANEXOS
+# MODAL / DIALOG DE DETALHES (CORRIGIDO: LIMPEZA & SEM DUPLICIDADE)
 # ---------------------------------------------------------
 @st.dialog("📋 Detalhes & Rastreabilidade do Apontamento", width="large")
 def modal_detalhes_dialog(id_projeto):
     match_row = df[df["ID"] == id_projeto]
     if match_row.empty:
         st.error("Projeto não encontrado.")
+        if st.button("❌ Fechar"):
+            st.session_state["id_modal_aberto"] = None
+            st.rerun()
         return
 
     row_item = match_row.iloc[0]
 
-    st.markdown(f"### Projeto: {row_item['Cliente_Projeto']}")
+    # Botão Superior de Fechamento Rápido
+    c_top1, c_top2 = st.columns([5, 1])
+    c_top1.markdown(f"### Projeto: {row_item['Cliente_Projeto']}")
+    if c_top2.button("❌ Fechar", key=f"btn_close_modal_top_{row_item['ID']}"):
+        st.session_state["id_modal_aberto"] = None
+        st.rerun()
+
     c_m1, c_m2, c_m3 = st.columns(3)
     c_m1.write(f"**ID:** #{row_item['ID']}")
     c_m2.write(f"**Responsável:** {row_item['Nome_Responsavel']}")
@@ -620,22 +625,23 @@ def modal_detalhes_dialog(id_projeto):
                 unsafe_allow_html=True,
             )
 
-            # FILTRO 1: EXIBIÇÃO E DOWNLOAD DE ANEXOS DIVERSOS
             if item.get("Anexo"):
                 renderizar_anexo_elemento(item["Anexo"], key_prefix=f"mdl_{row_item['ID']}_{idx_t}")
 
     st.divider()
     st.markdown("##### ➕ Registrar Novo Comentário + Anexo")
 
+    # USO DE CHAVE DINÂMICA PARA LIMPAR OS CAMPOS APÓS SALVAR
+    cnt = st.session_state["form_counter"]
     c_f1, c_f2 = st.columns([2, 1])
     txt_coment = c_f1.text_area(
-        "Comentário sobre a evolução:", key=f"dlg_txt_{row_item['ID']}"
+        "Comentário sobre a evolução:", key=f"dlg_txt_{row_item['ID']}_{cnt}"
     )
     file_coment = c_f2.file_uploader(
-        "Upload de Evidência:", key=f"dlg_file_{row_item['ID']}"
+        "Upload de Evidência:", key=f"dlg_file_{row_item['ID']}_{cnt}"
     )
 
-    if st.button("💾 Salvar Histórico", key=f"dlg_save_{row_item['ID']}"):
+    if st.button("💾 Salvar Histórico", key=f"dlg_save_btn_{row_item['ID']}"):
         if txt_coment or file_coment:
             try:
                 nome_anexo = None
@@ -660,6 +666,8 @@ def modal_detalhes_dialog(id_projeto):
                 )
                 salvar_dados(df)
                 st.session_state["df_auditoria"] = df
+                # Incrementa contador para resetar os campos de texto e arquivo
+                st.session_state["form_counter"] += 1
                 st.success("Histórico atualizado com sucesso!")
                 st.rerun()
             except Exception as e:
@@ -895,7 +903,6 @@ with tabs[0]:
 
     df_matriz_exibicao = df_filtrado.copy()
     if not df_matriz_exibicao.empty:
-        # FORMATANDO DATAS PARA O PADRÃO BRASILEIRO NA MATRIZ
         df_matriz_exibicao["Data_Inicio"] = df_matriz_exibicao["Data_Inicio"].apply(formatar_data_br)
         df_matriz_exibicao["Prazo"] = df_matriz_exibicao["Prazo"].apply(formatar_data_br)
 
@@ -1185,7 +1192,6 @@ with tabs[2]:
             for _, row in itens.iterrows():
                 sev_class = f"card-{str(row['Severidade']).lower()}"
 
-                # FORMATANDO DATAS NO PADRÃO BRASILEIRO NO CARD KANBAN
                 dt_ini_br = formatar_data_br(row.get('Data_Inicio'))
                 dt_prz_br = formatar_data_br(row.get('Prazo'))
 
@@ -1285,7 +1291,7 @@ with tabs[3]:
                     renderizar_anexo_elemento(t_item["Anexo"], key_prefix=f"mst_{row_h['ID']}_{idx_tm}")
 
 # ---------------------------------------------------------
-# TELA 5: EXTRATOR DE RELATÓRIOS (EXCEL MULTI-ABAS CASCATA)
+# TELA 5: EXTRATOR DE RELATÓRIOS
 # ---------------------------------------------------------
 with tabs[4]:
     st.markdown("### 📥 Extrator Inteligente de Relatórios Executivos")
@@ -1324,11 +1330,9 @@ with tabs[4]:
 
     st.divider()
 
-    # FILTRO 4: GERADOR DE EXCEL MULTI-ABAS (CASCATA DRE + BASE DADOS)
     def gerar_excel_relatorio_cascata(df_export):
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            # 1. ABA DE BASE DE DADOS COMPLETA
             df_base_exp = df_export.copy()
             df_base_exp["Data_Inicio"] = df_base_exp["Data_Inicio"].apply(formatar_data_br)
             df_base_exp["Prazo"] = df_base_exp["Prazo"].apply(formatar_data_br)
@@ -1337,10 +1341,8 @@ with tabs[4]:
             cols_limpas = [c for c in df_base_exp.columns if not c.startswith("dt_tmp")]
             df_base_exp[cols_limpas].to_excel(writer, sheet_name="Base_Dados_Completa", index=False)
 
-            # 2. ABA VISÃO CASCATA ESTRUTURADA
             linhas_cascata = []
             for _, r in df_export.iterrows():
-                # Linha Cabeçalho do Projeto
                 linhas_cascata.append({
                     "Nivel": "PROJETO",
                     "ID": r["ID"],
@@ -1355,7 +1357,6 @@ with tabs[4]:
                     "Anexo_Evidencia": "-",
                 })
 
-                # Linhas filhas (Histórico/Timeline)
                 try:
                     hist_l = json.loads(str(r.get("Timeline_JSON", "[]")))
                 except:
