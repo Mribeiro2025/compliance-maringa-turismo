@@ -167,8 +167,30 @@ def carregar_usuarios():
         if os.path.exists(ARQUIVO_USUARIOS):
             df_u = pd.read_excel(ARQUIVO_USUARIOS, dtype=str)
             for col in ["Usuario", "Senha", "Nome", "Nivel", "Status"]:
-                if col in df_u.columns:
-                    df_u[col] = df_u[col].fillna("").astype(str)
+                if col not in df_u.columns:
+                    df_u[col] = ""
+                df_u[col] = df_u[col].fillna("").astype(str).str.strip()
+            
+            # GARANTIA MASTER: Se o utilizador mribeiro1 não existir ou estiver incorreto, ajusta forçadamente
+            mask_master = df_u["Usuario"].str.lower() == "mribeiro1"
+            if not mask_master.any():
+                novo_master = pd.DataFrame([{
+                    "Usuario": "mribeiro1",
+                    "Senha": "123",
+                    "Nome": "Marcos Ribeiro (Master)",
+                    "Nivel": "Master",
+                    "Status": "Ativo"
+                }])
+                df_u = pd.concat([df_u, novo_master], ignore_index=True)
+                salvar_usuarios(df_u)
+            else:
+                # Se existir, garante que a senha seja '123' e o status 'Ativo'
+                idx_m = df_u[mask_master].index[0]
+                df_u.loc[idx_m, "Senha"] = "123"
+                df_u.loc[idx_m, "Nivel"] = "Master"
+                df_u.loc[idx_m, "Status"] = "Ativo"
+                salvar_usuarios(df_u)
+
             return df_u
         else:
             usuarios_default = pd.DataFrame(
