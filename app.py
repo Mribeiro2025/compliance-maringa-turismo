@@ -104,6 +104,7 @@ PASTA_EVIDENCIAS = "evidencias_acumuladas"
 ARQUIVO_MATRIZ = "matriz_auditoria.xlsx"
 ARQUIVO_USUARIOS = "usuarios_sistema.xlsx"
 ARQUIVO_LOGS = "logs_auditoria_sistema.xlsx"
+ARQUIVO_CONFIG = "config_kanban.json"
 
 if not os.path.exists(PASTA_EVIDENCIAS):
     os.makedirs(PASTA_EVIDENCIAS)
@@ -209,6 +210,32 @@ def salvar_usuarios(df_u):
         st.error(f"Erro ao salvar arquivo de usuários: {e}")
 
 
+# GERENCIAMENTO DE PERSISTÊNCIA DAS COLUNAS
+def carregar_colunas_kanban():
+    padrao = [
+        "A Fazer / Atrasado",
+        "Em Andamento",
+        "Em Validação (Auditor)",
+        "Concluído",
+    ]
+    if os.path.exists(ARQUIVO_CONFIG):
+        try:
+            with open(ARQUIVO_CONFIG, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return data.get("colunas", padrao)
+        except:
+            pass
+    return padrao
+
+
+def salvar_colunas_kanban(colunas):
+    try:
+        with open(ARQUIVO_CONFIG, "w", encoding="utf-8") as f:
+            json.dump({"colunas": colunas}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.error(f"Erro ao salvar configuração do Kanban: {e}")
+
+
 def carregar_dados():
     try:
         if os.path.exists(ARQUIVO_MATRIZ):
@@ -296,13 +323,14 @@ def carregar_dados():
                 ],
                 "Data_Conclusao": ["-", "-", "2026-09-02", "-", "-"],
                 "Status": [
-                    "A Fazer",
-                    "Em Validação",
+                    "A Fazer / Atrasado",
+                    "Em Validação (Auditor)",
                     "Concluído",
                     "Em Andamento",
-                    "Atrasado",
+                    "A Fazer / Atrasado",
                 ],
                 "Timeline_JSON": ["[]", "[]", "[]", "[]", "[]"],
+                "Campos_Custom_JSON": ["{}", "{}", "{}", "{}", "{}"],
             }
             df_base = pd.DataFrame(dados_iniciais)
             df_base.to_excel(ARQUIVO_MATRIZ, index=False)
@@ -310,18 +338,17 @@ def carregar_dados():
         colunas_obrigatorias = {
             "Cliente_Projeto": "Projeto Geral",
             "Etapa_SIPOC": "Geral",
-            "Status": "A Fazer",
+            "Status": "A Fazer / Atrasado",
             "Severidade": "Média",
             "Data_Inicio": str(get_now_br().date()),
             "Prazo": str(get_now_br().date()),
             "Data_Conclusao": "-",
             "Timeline_JSON": "[]",
+            "Campos_Custom_JSON": "{}",
         }
         for col, default_val in colunas_obrigatorias.items():
             if col not in df_base.columns:
                 df_base[col] = default_val
-
-        df_base["Status"] = df_base["Status"].replace({"Congos": "Concluído"})
 
         df_base["Ultima_Acao"] = df_base.apply(
             lambda r: extrair_data_ultima_acao(
@@ -378,7 +405,6 @@ def renderizar_anexo_elemento(nome_anexo, key_prefix):
 
 
 def renderizar_painel_detalhes(id_modal):
-    """Renderiza o painel de detalhes exclusivamente dentro da aba do Kanban."""
     match_row = df[df["ID"] == id_modal]
     if match_row.empty:
         return
@@ -405,6 +431,17 @@ def renderizar_painel_detalhes(id_modal):
         st.info(
             f"🛫 **Data Início:** {formatar_data_br(row_item.get('Data_Inicio'))} | 🎯 **Prazo:** {formatar_data_br(row_item.get('Prazo'))} | ⏱️ **Última Ação:** {row_item.get('Ultima_Acao', '-')}"
         )
+
+        # Exibição de Campos Customizados Dinâmicos
+        try:
+            campos_c = json.loads(str(row_item.get("Campos_Custom_JSON", "{}")))
+            if campos_c:
+                st.markdown("##### 🧩 Campos Personalizados Adicionais")
+                cols_custom = st.columns(2)
+                for i, (k, v) in enumerate(campos_c.items()):
+                    cols_custom[i % 2].write(f"**{k}:** {v}")
+        except:
+            pass
 
         st.markdown("##### 💬 Histórico de Registros")
         try:
@@ -651,14 +688,9 @@ if "df_auditoria" not in st.session_state:
 
 df = st.session_state["df_auditoria"]
 
-# Colunas do Kanban
+# CARREGAMENTO PERSISTENTE DAS COLUNAS DO KANBAN
 if "colunas_kanban_custom" not in st.session_state:
-    st.session_state["colunas_kanban_custom"] = [
-        "A Fazer / Atrasado",
-        "Em Andamento",
-        "Em Validação (Auditor)",
-        "Concluído",
-    ]
+    st.session_state["colunas_kanban_custom"] = carregar_colunas_kanban()
 
 if "form_counter" not in st.session_state:
     st.session_state["form_counter"] = 0
@@ -677,7 +709,6 @@ projeto_selecionado = st.sidebar.selectbox(
 st.sidebar.write("📅 **Período de Emissão (Data Inicial):**")
 c_sb1, c_sb2 = st.sidebar.columns(2)
 
-# AJUSTE PADRÃO DE DATAS PARA INCLUIR REGISTROS DESDE 2020
 dt_ini_sb = c_sb1.date_input(
     "De:", value=datetime.date(2020, 1, 1), key="sb_dt_de", format="DD/MM/YYYY"
 )
@@ -725,11 +756,8 @@ with tabs[0]:
 
     total_achados = len(df_filtrado)
     concluidos = len(df_filtrado[df_filtrado["Status"] == "Concluído"])
-    em_validacao = len(df_filtrado[df_filtrado["Status"] == "Em Validação"])
-    em_andamento = len(
-        df_filtrado[df_filtrado["Status"].isin(["Em Andamento", "A Fazer"])]
-    )
-    atrasados = len(df_filtrado[df_filtrado["Status"] == "Atrasado"])
+    em_validacao = len(df_filtrado[df_filtrado["Status"].str.contains("Validação", case=False, na=False)])
+    atrasados = len(df_filtrado[df_filtrado["Status"].str.contains("Atrasado", case=False, na=False)])
 
     taxa_resolucao = (
         round((concluidos / total_achados) * 100, 1) if total_achados > 0 else 0
@@ -929,7 +957,7 @@ with tabs[0]:
         )
 
 # ---------------------------------------------------------
-# TELA 2: OPERAÇÕES E GESTÃO DE PROJETOS (INCLUSÃO / EDIÇÃO / EXCLUSÃO EXCLUSIVAS)
+# TELA 2: OPERAÇÕES E GESTÃO DE PROJETOS (INCLUSÃO DE CAMPOS ADICIONAIS)
 # ---------------------------------------------------------
 with tabs[1]:
     st.markdown("### ⚙️ Gestão de Projetos e Apontamentos")
@@ -963,6 +991,12 @@ with tabs[1]:
             inc_dt_inicio = c_i7.date_input("Data de Início:", value=get_now_br().date(), format="DD/MM/YYYY")
             inc_prazo = c_i8.date_input("Prazo Limite:", value=get_now_br().date() + datetime.timedelta(days=15), format="DD/MM/YYYY")
 
+            st.markdown("---")
+            st.markdown("##### 🧩 Criar Campo Personalizado Adicional")
+            c_cust1, c_cust2 = st.columns(2)
+            campo_cust_nome = c_cust1.text_input("Nome do Novo Campo (Ex: Fornecedor, SLA):")
+            campo_cust_valor = c_cust2.text_input("Valor do Campo:")
+
             if st.form_submit_button("➕ Criar Registro Definitivo"):
                 if not inc_proj or not inc_achado:
                     st.error("Por favor, preencha o Nome do Projeto e o Achado.")
@@ -971,6 +1005,10 @@ with tabs[1]:
                         novo_id = f"AUD-{len(df) + 1:02d}"
                         data_inicio_str = inc_dt_inicio.strftime("%Y-%m-%d")
                         prazo_str = inc_prazo.strftime("%Y-%m-%d")
+
+                        dict_custom = {}
+                        if campo_cust_nome and campo_cust_valor:
+                            dict_custom[campo_cust_nome] = campo_cust_valor
 
                         novo_registro = pd.DataFrame(
                             [
@@ -989,8 +1027,9 @@ with tabs[1]:
                                     "Data_Inicio": data_inicio_str,
                                     "Prazo": prazo_str,
                                     "Data_Conclusao": "-",
-                                    "Status": "A Fazer",
+                                    "Status": st.session_state["colunas_kanban_custom"][0],
                                     "Timeline_JSON": "[]",
+                                    "Campos_Custom_JSON": json.dumps(dict_custom, ensure_ascii=False),
                                     "Ultima_Acao": formatar_data_br(data_inicio_str),
                                 }
                             ]
@@ -1028,12 +1067,14 @@ with tabs[1]:
                 ed_dt_inicio = c_e2.text_input("Data Início (YYYY-MM-DD):", value=str(row_ed.get("Data_Inicio", "-")))
                 ed_prazo = c_e3.text_input("Novo Prazo (YYYY-MM-DD):", value=str(row_ed["Prazo"]))
 
+                idx_st = 0
+                if row_ed["Status"] in st.session_state["colunas_kanban_custom"]:
+                    idx_st = st.session_state["colunas_kanban_custom"].index(row_ed["Status"])
+
                 ed_status = st.selectbox(
                     "Status:",
-                    ["A Fazer", "Em Andamento", "Em Validação", "Concluído", "Atrasado"],
-                    index=["A Fazer", "Em Andamento", "Em Validação", "Concluído", "Atrasado"].index(
-                        row_ed["Status"] if row_ed["Status"] in ["A Fazer", "Em Andamento", "Em Validação", "Concluído", "Atrasado"] else "A Fazer"
-                    ),
+                    st.session_state["colunas_kanban_custom"],
+                    index=idx_st,
                 )
 
                 if st.form_submit_button("💾 Salvar Alterações"):
@@ -1046,7 +1087,7 @@ with tabs[1]:
                         df.loc[idx, "Data_Inicio"] = str(ed_dt_inicio)
                         df.loc[idx, "Prazo"] = str(ed_prazo)
                         df.loc[idx, "Status"] = str(ed_status)
-                        if ed_status == "Concluído":
+                        if "Concluído" in ed_status:
                             df.loc[idx, "Data_Conclusao"] = str(get_now_br().date())
 
                         salvar_dados(df)
@@ -1082,7 +1123,7 @@ with tabs[1]:
                     st.error(f"Erro ao excluir o projeto: {e}")
 
 # ---------------------------------------------------------
-# TELA 3: CENTRAL DE PROJETOS (KANBAN)
+# TELA 3: CENTRAL DE PROJETOS (KANBAN CORRIGIDO)
 # ---------------------------------------------------------
 with tabs[2]:
     st.markdown("### 📌 Quadro Visual de Projetos & Ações")
@@ -1113,6 +1154,7 @@ with tabs[2]:
                 st.session_state["colunas_kanban_custom"].insert(
                     idx_pos, nova_col_k
                 )
+                salvar_colunas_kanban(st.session_state["colunas_kanban_custom"])
                 st.rerun()
 
         st.divider()
@@ -1127,27 +1169,20 @@ with tabs[2]:
         if c_r3.button("❌ Remover Coluna", disabled=not chk_col_del):
             if len(st.session_state["colunas_kanban_custom"]) > 1:
                 st.session_state["colunas_kanban_custom"].remove(col_del_k)
+                salvar_colunas_kanban(st.session_state["colunas_kanban_custom"])
                 st.rerun()
 
     cols_st = st.columns(len(st.session_state["colunas_kanban_custom"]))
 
+    # FIX CORREÇÃO DE STATUS DINÂMICO
     def status_por_coluna(col_nome):
-        if "A Fazer" in col_nome:
-            return ["A Fazer", "Atrasado"]
-        elif "Andamento" in col_nome:
-            return ["Em Andamento"]
-        elif "Validação" in col_nome:
-            return ["Em Validação"]
-        elif "Concluído" in col_nome:
-            return ["Concluído"]
-        else:
-            return [col_nome]
+        # Mapeamento estrito por igualdade exata do nome da coluna
+        return [col_nome]
 
     for index, col_nome in enumerate(st.session_state["colunas_kanban_custom"]):
         with cols_st[index]:
             st.markdown(f"#### 📌 {col_nome}")
-            st_alvo = status_por_coluna(col_nome)
-            itens = df_filtrado[df_filtrado["Status"].isin(st_alvo)]
+            itens = df_filtrado[df_filtrado["Status"] == col_nome]
 
             for _, row in itens.iterrows():
                 sev_class = f"card-{str(row['Severidade']).lower()}"
@@ -1178,21 +1213,23 @@ with tabs[2]:
                 c_btn1, c_btn2 = st.columns([1.2, 1])
 
                 with c_btn1:
+                    idx_col_atual = 0
+                    if col_nome in st.session_state["colunas_kanban_custom"]:
+                        idx_col_atual = st.session_state["colunas_kanban_custom"].index(col_nome)
+
                     st_mudar = st.selectbox(
                         "Mover:",
                         st.session_state["colunas_kanban_custom"],
+                        index=idx_col_atual,
                         key=f"sb_st_c_{row['ID']}",
                         label_visibility="collapsed",
                     )
-                    if st.button("🚀 Mover", key=f"btn_mv_c_{row['ID']}"):
+                    
+                    if st_mudar != col_nome:
                         try:
                             idx_k = df[df["ID"] == row["ID"]].index[0]
-                            st_logico = "Concluído" if "Concluído" in st_mudar else (
-                                "Em Validação" if "Validação" in st_mudar else (
-                                    "Em Andamento" if "Andamento" in st_mudar else "A Fazer"
-                                )
-                            )
-                            df.loc[idx_k, "Status"] = st_logico
+                            # Atribuição direta do nome da nova coluna ao Status do registro
+                            df.loc[idx_k, "Status"] = str(st_mudar)
                             salvar_dados(df)
                             st.session_state["df_auditoria"] = df
                             st.rerun()
