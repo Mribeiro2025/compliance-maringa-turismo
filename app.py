@@ -676,11 +676,13 @@ projeto_selecionado = st.sidebar.selectbox(
 
 st.sidebar.write("📅 **Período de Emissão (Data Inicial):**")
 c_sb1, c_sb2 = st.sidebar.columns(2)
+
+# AJUSTE PADRÃO DE DATAS PARA INCLUIR REGISTROS DESDE 2020
 dt_ini_sb = c_sb1.date_input(
-    "De:", value=datetime.date(2026, 1, 1), key="sb_dt_de", format="DD/MM/YYYY"
+    "De:", value=datetime.date(2020, 1, 1), key="sb_dt_de", format="DD/MM/YYYY"
 )
 dt_fim_sb = c_sb2.date_input(
-    "Até:", value=datetime.date(2026, 12, 31), key="sb_dt_ate", format="DD/MM/YYYY"
+    "Até:", value=datetime.date(2030, 12, 31), key="sb_dt_ate", format="DD/MM/YYYY"
 )
 
 df_filtrado = df.copy()
@@ -1080,12 +1082,11 @@ with tabs[1]:
                     st.error(f"Erro ao excluir o projeto: {e}")
 
 # ---------------------------------------------------------
-# TELA 3: CENTRAL DE PROJETOS (KANBAN - ÚNICA TELA COM MODAL DE DETALHES)
+# TELA 3: CENTRAL DE PROJETOS (KANBAN)
 # ---------------------------------------------------------
 with tabs[2]:
     st.markdown("### 📌 Quadro Visual de Projetos & Ações")
 
-    # DETALHES EXIBIDOS EXCLUSIVAMENTE AQUI NO KANBAN
     if (
         "id_modal_aberto" in st.session_state
         and st.session_state["id_modal_aberto"]
@@ -1277,10 +1278,10 @@ with tabs[4]:
     )
 
     dt_ini_rel_e = f_c2.date_input(
-        "Emissão (De):", value=datetime.date(2026, 1, 1), format="DD/MM/YYYY", key="f_rel_e_de"
+        "Emissão (De):", value=datetime.date(2020, 1, 1), format="DD/MM/YYYY", key="f_rel_e_de"
     )
     dt_fim_rel_e = f_c3.date_input(
-        "Emissão (Até):", value=datetime.date(2026, 12, 31), format="DD/MM/YYYY", key="f_rel_e_ate"
+        "Emissão (Até):", value=datetime.date(2030, 12, 31), format="DD/MM/YYYY", key="f_rel_e_ate"
     )
 
     df_rel = df.copy()
