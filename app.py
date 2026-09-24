@@ -2,6 +2,7 @@ import datetime
 import json
 import os
 import io
+import re
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -95,6 +96,15 @@ st.markdown(
         margin-bottom: 12px;
         border-left: 4px solid #10b981;
     }
+    
+    /* IA Insights Box */
+    .ai-insights-box {
+        background: linear-gradient(135deg, #eff6ff 0%, #e0f2fe 100%);
+        border: 1px solid #bae6fd;
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 15px;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -110,7 +120,7 @@ if not os.path.exists(PASTA_EVIDENCIAS):
     os.makedirs(PASTA_EVIDENCIAS)
 
 
-# 2. HELPER FUNCTIONS
+# 2. HELPER FUNCTIONS & SUPORTE ALFANUMÉRICO
 def formatar_data_br(val_data):
     if not val_data or str(val_data).strip() in ["-", "", "nan", "None"]:
         return "-"
@@ -171,7 +181,7 @@ def carregar_usuarios():
                     df_u[col] = ""
                 df_u[col] = df_u[col].fillna("").astype(str).str.strip()
             
-            # GARANTIA MASTER: Se o utilizador mribeiro1 não existir ou estiver incorreto, ajusta forçadamente
+            # GARANTIA MASTER COM SUPORTE ALFANUMÉRICO
             mask_master = df_u["Usuario"].str.lower() == "mribeiro1"
             if not mask_master.any():
                 novo_master = pd.DataFrame([{
@@ -184,12 +194,10 @@ def carregar_usuarios():
                 df_u = pd.concat([df_u, novo_master], ignore_index=True)
                 salvar_usuarios(df_u)
             else:
-                # Se existir, garante que a senha seja '123' e o status 'Ativo'
                 idx_m = df_u[mask_master].index[0]
-                df_u.loc[idx_m, "Senha"] = "123"
-                df_u.loc[idx_m, "Nivel"] = "Master"
-                df_u.loc[idx_m, "Status"] = "Ativo"
-                salvar_usuarios(df_u)
+                if df_u.loc[idx_m, "Status"] != "Ativo":
+                    df_u.loc[idx_m, "Status"] = "Ativo"
+                    salvar_usuarios(df_u)
 
             return df_u
         else:
@@ -226,13 +234,12 @@ def salvar_usuarios(df_u):
     try:
         df_salvar = df_u.copy()
         for col in df_salvar.columns:
-            df_salvar[col] = df_salvar[col].astype(str)
+            df_salvar[col] = df_salvar[col].astype(str).str.strip()
         df_salvar.to_excel(ARQUIVO_USUARIOS, index=False)
     except Exception as e:
         st.error(f"Erro ao salvar arquivo de usuários: {e}")
 
 
-# GERENCIAMENTO DE PERSISTÊNCIA DAS COLUNAS
 def carregar_colunas_kanban():
     padrao = [
         "A Fazer / Atrasado",
@@ -256,6 +263,21 @@ def salvar_colunas_kanban(colunas):
             json.dump({"colunas": colunas}, f, ensure_ascii=False, indent=2)
     except Exception as e:
         st.error(f"Erro ao salvar configuração do Kanban: {e}")
+
+
+def gerar_novo_id(dataframe):
+    if dataframe.empty or "ID" not in dataframe.columns:
+        return "AUD-01"
+    
+    ids_existentes = dataframe["ID"].astype(str).tolist()
+    numeros = []
+    for id_str in ids_existentes:
+        match = re.search(r'\d+', id_str)
+        if match:
+            numeros.append(int(match.group()))
+    
+    proximo_num = max(numeros) + 1 if numeros else 1
+    return f"AUD-{proximo_num:02d}"
 
 
 def carregar_dados():
@@ -454,11 +476,10 @@ def renderizar_painel_detalhes(id_modal):
             f"🛫 **Data Início:** {formatar_data_br(row_item.get('Data_Inicio'))} | 🎯 **Prazo:** {formatar_data_br(row_item.get('Prazo'))} | ⏱️ **Última Ação:** {row_item.get('Ultima_Acao', '-')}"
         )
 
-        # Exibição de Campos Customizados Dinâmicos
         try:
             campos_c = json.loads(str(row_item.get("Campos_Custom_JSON", "{}")))
             if campos_c:
-                st.markdown("##### 🧩 Campos Personalizados Adicionais")
+                st.markdown("##### 🧩 Campos Personalizados Adicional")
                 cols_custom = st.columns(2)
                 for i, (k, v) in enumerate(campos_c.items()):
                     cols_custom[i % 2].write(f"**{k}:** {v}")
@@ -592,19 +613,17 @@ if not st.session_state["autenticado"]:
     with tab_login:
         with st.form("form_login"):
             usr = st.text_input("Usuário:")
-            pwd = st.text_input("Senha:", type="password")
+            pwd = st.text_input("Senha (Aceita Alfanumérico):", type="password")
             if st.form_submit_button("Entrar no Sistema"):
                 try:
                     match = df_users[
-                        (df_users["Usuario"].astype(str) == str(usr).strip())
-                        & (df_users["Senha"].astype(str) == str(pwd).strip())
+                        (df_users["Usuario"].astype(str).str.strip() == str(usr).strip())
+                        & (df_users["Senha"].astype(str).str.strip() == str(pwd).strip())
                     ]
                     if len(match) > 0:
                         if match.iloc[0]["Status"] == "Ativo":
                             st.session_state["autenticado"] = True
-                            st.session_state["usuario_logado"] = match.iloc[
-                                0
-                            ].to_dict()
+                            st.session_state["usuario_logado"] = match.iloc[0].to_dict()
                             registrar_log(usr, "Login", "Acesso efetuado")
                             st.rerun()
                         else:
@@ -618,7 +637,7 @@ if not st.session_state["autenticado"]:
         with st.form("form_solicitar_acesso"):
             novo_usr = st.text_input("Nome de Usuário:")
             novo_nome = st.text_input("Nome Completo:")
-            nova_pwd = st.text_input("Senha:", type="password")
+            nova_pwd = st.text_input("Senha (Aceita Letras, Números e Símbolos):", type="password")
             if st.form_submit_button("Solicitar Acesso"):
                 try:
                     if str(novo_usr).strip() in df_users["Usuario"].values:
@@ -660,7 +679,7 @@ st.sidebar.markdown(f"**Nível:** `{user_info['Nivel']}`")
 with st.sidebar.popover("🔑 Trocar Minha Senha"):
     st.write("### Alterar Senha")
     senha_atual = st.text_input("Senha Atual:", type="password")
-    nova_senha = st.text_input("Nova Senha:", type="password")
+    nova_senha = st.text_input("Nova Senha (Alfanumérica):", type="password")
 
     if st.button("Confirmar Alteração"):
         if not senha_atual or not nova_senha:
@@ -678,20 +697,15 @@ with st.sidebar.popover("🔑 Trocar Minha Senha"):
                     senha_armazenada = str(df_u.loc[idx_u, "Senha"]).strip()
 
                     if senha_armazenada == str(senha_atual).strip():
-                        novas_senhas = list(df_u["Senha"].astype(str))
-                        novas_senhas[idx_u] = str(nova_senha).strip()
-
-                        df_u["Senha"] = novas_senhas
+                        df_u.loc[idx_u, "Senha"] = str(nova_senha).strip()
                         salvar_usuarios(df_u)
 
-                        st.session_state["usuario_logado"]["Senha"] = str(
-                            nova_senha
-                        ).strip()
+                        st.session_state["usuario_logado"]["Senha"] = str(nova_senha).strip()
 
                         registrar_log(
                             user_info["Usuario"],
                             "Troca de Senha",
-                            "Senha alterada com sucesso",
+                            "Senha alfanumérica alterada com sucesso",
                         )
                         st.success("Senha alterada com sucesso!")
                     else:
@@ -716,6 +730,24 @@ if "colunas_kanban_custom" not in st.session_state:
 
 if "form_counter" not in st.session_state:
     st.session_state["form_counter"] = 0
+
+# SURPRESA IA: RISK ASSISTANT NA SIDEBAR
+st.sidebar.divider()
+st.sidebar.markdown("🤖 **Assistente IA de Compliance**")
+with st.sidebar.expander("💡 Diagnóstico Preditivo de Riscos"):
+    criticos_count = len(df[df["Severidade"] == "Crítica"])
+    atrasados_count = len(df[df["Status"].str.contains("Atrasado", case=False, na=False)])
+    st.markdown(
+        f"""
+        <div class="ai-insights-box">
+            <small><b>Análise Automática:</b></small><br>
+            • <b>{criticos_count}</b> riscos de alta severidade mapeados.<br>
+            • <b>{atrasados_count}</b> planos fora do SLA estipulado.<br>
+            <i>Recomendação: priorizar tratativas com status 'A Fazer / Atrasado'.</i>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # FILTROS NA SIDEBAR
 st.sidebar.divider()
@@ -979,7 +1011,7 @@ with tabs[0]:
         )
 
 # ---------------------------------------------------------
-# TELA 2: OPERAÇÕES E GESTÃO DE PROJETOS (INCLUSÃO DE CAMPOS ADICIONAIS)
+# TELA 2: OPERAÇÕES E GESTÃO DE PROJETOS (INCLUSÃO DE CAMPOS ADICIONAIS & AUTO-RESET)
 # ---------------------------------------------------------
 with tabs[1]:
     st.markdown("### ⚙️ Gestão de Projetos e Apontamentos")
@@ -995,6 +1027,11 @@ with tabs[1]:
 
     with sub_t1:
         st.markdown("##### ➕ Formulario de Abertura de Apontamento")
+        
+        # GERADOR DE ID AUTOMÁTICO VISÍVEL
+        id_sugerido = gerar_novo_id(df)
+        st.info(f"🆔 **Novo ID a ser gerado automaticamente:** `{id_sugerido}`")
+
         with st.form("form_inc_proj_novo", clear_on_submit=True):
             c_i1, c_i2 = st.columns(2)
             inc_proj = c_i1.text_input("Nome do Cliente / Projeto:")
@@ -1024,7 +1061,7 @@ with tabs[1]:
                     st.error("Por favor, preencha o Nome do Projeto e o Achado.")
                 else:
                     try:
-                        novo_id = f"AUD-{len(df) + 1:02d}"
+                        novo_id = gerar_novo_id(df)
                         data_inicio_str = inc_dt_inicio.strftime("%Y-%m-%d")
                         prazo_str = inc_prazo.strftime("%Y-%m-%d")
 
@@ -1145,7 +1182,7 @@ with tabs[1]:
                     st.error(f"Erro ao excluir o projeto: {e}")
 
 # ---------------------------------------------------------
-# TELA 3: CENTRAL DE PROJETOS (KANBAN CORRIGIDO)
+# TELA 3: CENTRAL DE PROJETOS (KANBAN CORRIGIDO E LIMPEZA DE INPUT)
 # ---------------------------------------------------------
 with tabs[2]:
     st.markdown("### 📌 Quadro Visual de Projetos & Ações")
@@ -1159,7 +1196,10 @@ with tabs[2]:
     with st.expander("🛠️ Personalizar e Reordenar Colunas do Kanban"):
         c_k1, c_k2, c_k3 = st.columns([1.5, 1, 1.2])
 
-        nova_col_k = c_k1.text_input("Nome da Nova Coluna:")
+        if "novo_col_input" not in st.session_state:
+            st.session_state["novo_col_input"] = ""
+
+        nova_col_k = c_k1.text_input("Nome da Nova Coluna:", key="novo_col_input")
         posicao_k = c_k2.number_input(
             "Posição (1 a N):",
             min_value=1,
@@ -1167,17 +1207,22 @@ with tabs[2]:
             value=len(st.session_state["colunas_kanban_custom"]) + 1,
         )
 
-        if c_k3.button("➕ Criar na Posição Escolhida"):
+        if c_k3.button("➕ Criar Coluna Dinâmica"):
             if (
                 nova_col_k
-                and nova_col_k not in st.session_state["colunas_kanban_custom"]
+                and nova_col_k.strip()
+                and nova_col_k.strip() not in st.session_state["colunas_kanban_custom"]
             ):
                 idx_pos = int(posicao_k) - 1
                 st.session_state["colunas_kanban_custom"].insert(
-                    idx_pos, nova_col_k
+                    idx_pos, nova_col_k.strip()
                 )
                 salvar_colunas_kanban(st.session_state["colunas_kanban_custom"])
+                st.success(f"Coluna '{nova_col_k.strip()}' criada com sucesso!")
+                st.session_state["novo_col_input"] = ""
                 st.rerun()
+            elif nova_col_k.strip() in st.session_state["colunas_kanban_custom"]:
+                st.warning("Esta coluna já existe no Kanban.")
 
         st.divider()
         c_r1, c_r2, c_r3 = st.columns([1.5, 1, 1])
@@ -1195,11 +1240,6 @@ with tabs[2]:
                 st.rerun()
 
     cols_st = st.columns(len(st.session_state["colunas_kanban_custom"]))
-
-    # FIX CORREÇÃO DE STATUS DINÂMICO
-    def status_por_coluna(col_nome):
-        # Mapeamento estrito por igualdade exata do nome da coluna
-        return [col_nome]
 
     for index, col_nome in enumerate(st.session_state["colunas_kanban_custom"]):
         with cols_st[index]:
@@ -1250,7 +1290,6 @@ with tabs[2]:
                     if st_mudar != col_nome:
                         try:
                             idx_k = df[df["ID"] == row["ID"]].index[0]
-                            # Atribuição direta do nome da nova coluna ao Status do registro
                             df.loc[idx_k, "Status"] = str(st_mudar)
                             salvar_dados(df)
                             st.session_state["df_auditoria"] = df
