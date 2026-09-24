@@ -896,35 +896,74 @@ if "colunas_kanban_custom" not in st.session_state:
 if "form_counter" not in st.session_state:
     st.session_state["form_counter"] = 0
 
-# ASSISTENTE PREDITIVO DE COMPLIANCE
-st.sidebar.divider()
-st.sidebar.markdown("🤖 **Assistente IA de Compliance**")
-with st.sidebar.expander("💡 Diagnóstico Preditivo de Riscos"):
-    criticos_count = len(df[df["Severidade"] == "Crítica"])
-    atrasados_count = len(df[df["Status"].str.contains("Atrasado", case=False, na=False)])
+# =========================================================
+# FILTROS NA SIDEBAR & ASSISTENTE PREDITIVO DE COMPLIANCE
+# =========================================================
+
+# --- 1. ASSISTENTE IA DE COMPLIANCE (DIAGNÓSTICO PREDITIVO REFORMULADO) ---
+st.sidebar.markdown("### 🤖 Assistente IA de Compliance")
+
+with st.sidebar.expander("💡 Diagnóstico Preditivo de Riscos", expanded=True):
+    # Cálculos dinâmicos baseados no DataFrame
+    now_br = pd.to_datetime(get_now_br().strftime("%Y-%m-%d"))
+    
+    # Mapeamento de colunas de severidade e prazo
+    col_sev = next((c for c in ["Severidade", "Criticidade", "Prioridade"] if c in df.columns), None)
+    col_prazo = next((c for c in ["Prazo", "Data_Prazo", "Data_Fim"] if c in df.columns), None)
+    col_status = next((c for c in ["Status", "Estado"] if c in df.columns), None)
+
+    # Métricas Dinâmicas
+    qtd_criticos = 0
+    if col_sev:
+        qtd_criticos = len(df[df[col_sev].astype(str).str.contains("Alta|Crítica|Alta Severidade", case=False, na=False)])
+
+    qtd_atrasados = 0
+    if col_prazo:
+        df_prazos = pd.to_datetime(df[col_prazo], errors="coerce")
+        qtd_atrasados = len(df[(df_prazos < now_br) & (df[col_status] != "Concluído")]) if col_status else len(df[df_prazos < now_br])
+
+    # Apresentação Visual Estilizada em HTML/CSS
+    cor_alerta_critico = "#ef4444" if qtd_criticos > 0 else "#22c55e"
+    cor_alerta_atraso = "#f59e0b" if qtd_atrasados > 0 else "#22c55e"
+
     st.markdown(
         f"""
-        <div class="ai-insights-box">
-            <small><b>Análise Automática:</b></small><br>
-            • <b>{criticos_count}</b> riscos de alta severidade mapeados.<br>
-            • <b>{atrasados_count}</b> planos fora do SLA estipulado.<br>
-            <i>Recomendação: priorizar tratativas com status 'A Fazer / Atrasado'.</i>
+        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-bottom: 8px;">
+            <div style="font-size: 0.85rem; font-weight: bold; color: #1e293b; margin-bottom: 8px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px;">
+                📊 Análise em Tempo Real
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <span style="font-size: 0.8rem; color: #475569;">Riscos de Alta Severidade:</span>
+                <span style="background-color: {cor_alerta_critico}; color: white; padding: 2px 8px; border-radius: 12px; font-weight: bold; font-size: 0.75rem;">
+                    {qtd_criticos}
+                </span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <span style="font-size: 0.8rem; color: #475569;">Ações Fora do SLA:</span>
+                <span style="background-color: {cor_alerta_atraso}; color: white; padding: 2px 8px; border-radius: 12px; font-weight: bold; font-size: 0.75rem;">
+                    {qtd_atrasados}
+                </span>
+            </div>
+            <div style="background-color: #eff6ff; border-left: 3px solid #3b82f6; padding: 6px 8px; border-radius: 4px; font-size: 0.75rem; color: #1e40af; line-height: 1.3;">
+                <b>💡 Recomendação:</b> {"Priorizar tratativas em atraso e itens de severidade alta no Kanban." if (qtd_criticos > 0 or qtd_atrasados > 0) else "Operação em conformidade. Nossos indicadores estão dentro da meta!"}
+            </div>
         </div>
         """,
         unsafe_allow_html=True
     )
 
-# FILTROS NA SIDEBAR
+
+# --- 2. FILTROS GERAIS NA SIDEBAR ---
 st.sidebar.divider()
 st.sidebar.title("🔍 Filtros Gerais")
 
-projetos_disponiveis = ["Todos os Projetos"] + list(
-    df["Cliente_Projeto"].unique()
-)
+# Filtro por Projeto / Cliente
+projetos_disponiveis = ["Todos os Projetos"] + list(df["Cliente_Projeto"].dropna().unique())
 projeto_selecionado = st.sidebar.selectbox(
     "📌 Projeto / Cliente:", options=projetos_disponiveis
 )
 
+# Filtro por Período de Emissão
 st.sidebar.write("📅 **Período de Emissão (Data Inicial):**")
 c_sb1, c_sb2 = st.sidebar.columns(2)
 
@@ -935,12 +974,28 @@ dt_fim_sb = c_sb2.date_input(
     "Até:", value=datetime.date(2030, 12, 31), key="sb_dt_ate", format="DD/MM/YYYY"
 )
 
+# Filtro por Criador / Responsável (Garantia de Mapeamento)
+col_resp = next((c for c in ["Nome_Responsavel", "Usuario_Criador", "Criador", "Usuario", "Responsavel"] if c in df.columns), None)
+
+usuario_selecionado = "Todos os Responsáveis"
+if col_resp:
+    responsaveis_disponiveis = ["Todos os Responsáveis"] + sorted(
+        df[col_resp].dropna().astype(str).unique().tolist()
+    )
+    usuario_selecionado = st.sidebar.selectbox(
+        "👤 Criador / Responsável:",
+        options=responsaveis_disponiveis,
+        key="sb_usuario_sel"
+    )
+else:
+    # Se nenhuma coluna exata for encontrada, exibe informação de apoio
+    st.sidebar.info("💡 Coluna de responsável não detectada no banco de dados.")
+
+# --- 3. APLICAÇÃO DOS FILTROS NO DATAFRAME ---
 df_filtrado = df.copy()
 
 if projeto_selecionado != "Todos os Projetos":
-    df_filtrado = df_filtrado[
-        df_filtrado["Cliente_Projeto"] == projeto_selecionado
-    ]
+    df_filtrado = df_filtrado[df_filtrado["Cliente_Projeto"] == projeto_selecionado]
 
 if dt_ini_sb and dt_fim_sb:
     df_filtrado["dt_tmp_inicio"] = pd.to_datetime(
@@ -951,6 +1006,10 @@ if dt_ini_sb and dt_fim_sb:
         & (df_filtrado["dt_tmp_inicio"] <= dt_fim_sb)
     ]
 
+if col_resp and usuario_selecionado != "Todos os Responsáveis":
+    df_filtrado = df_filtrado[df_filtrado[col_resp] == usuario_selecionado]
+
+# --- 4. NAVEGAÇÃO DE ABAS ---
 abas = [
     "📊 Painel Executivo (BI & Governança)",
     "📈 Dashboard Analítico de KPIs",
@@ -1257,7 +1316,7 @@ with tabs[2]:
 
 
 # ---------------------------------------------------------
-# TELA 4: CENTRAL DE PROJETOS (KANBAN INTERATIVO)
+# TELA 4: CENTRAL DE PROJETOS (KANBAN)
 # ---------------------------------------------------------
 with tabs[3]:
     st.markdown("### 📌 Quadro Visual de Projetos & Ações")
@@ -1265,23 +1324,48 @@ with tabs[3]:
     if "id_modal_aberto" in st.session_state and st.session_state["id_modal_aberto"]:
         renderizar_painel_detalhes(st.session_state["id_modal_aberto"])
 
+    # --- NOVO: FILTRO RÁPIDO DE RESPONSÁVEL / CRIADOR ---
+    col_resp_existente = "Nome_Responsavel" if "Nome_Responsavel" in df_filtrado.columns else ("Usuario_Criador" if "Usuario_Criador" in df_filtrado.columns else None)
+    
+    if col_resp_existente:
+        lista_responsaveis = ["Todos os Responsáveis"] + sorted(df[col_resp_existente].dropna().astype(str).unique().tolist())
+        resp_sel = st.selectbox("👤 Filtrar Cartões por Criador / Responsável:", options=lista_responsaveis, key="f_kanban_resp")
+        if resp_sel != "Todos os Responsáveis":
+            df_filtrado = df_filtrado[df_filtrado[col_resp_existente] == resp_sel]
+
     with st.expander("🛠️ Personalizar e Reordenar Colunas do Kanban"):
         c_k1, c_k2, c_k3 = st.columns([1.5, 1, 1.2])
 
         if "novo_col_input" not in st.session_state:
             st.session_state["novo_col_input"] = ""
 
-        nova_col_k = c_k1.text_input("Nome da Nova Coluna:", key="novo_col_input")
-        posicao_k = c_k2.number_input("Posição (1 a N):", min_value=1, max_value=len(st.session_state["colunas_kanban_custom"]) + 1, value=len(st.session_state["colunas_kanban_custom"]) + 1)
-
-        if c_k3.button("➕ Criar Coluna Dinâmica"):
-            if nova_col_k and nova_col_k.strip() and nova_col_k.strip() not in st.session_state["colunas_kanban_custom"]:
-                idx_pos = int(posicao_k) - 1
-                st.session_state["colunas_kanban_custom"].insert(idx_pos, nova_col_k.strip())
+        # Callback seguro para criação de colunas
+        def processar_nova_coluna():
+            nome_input = st.session_state.get("novo_col_input", "").strip()
+            if nome_input and nome_input not in st.session_state["colunas_kanban_custom"]:
+                pos_val = st.session_state.get("posicao_col_input", len(st.session_state["colunas_kanban_custom"]) + 1)
+                idx_pos = int(pos_val) - 1
+                
+                st.session_state["colunas_kanban_custom"].insert(idx_pos, nome_input)
                 salvar_colunas_kanban(st.session_state["colunas_kanban_custom"])
-                st.success(f"Coluna '{nova_col_k.strip()}' criada com sucesso!")
+                
                 st.session_state["novo_col_input"] = ""
-                st.rerun()
+                st.session_state["sucesso_msg_col"] = f"Coluna '{nome_input}' criada com sucesso!"
+
+        nova_col_k = c_k1.text_input("Nome da Nova Coluna:", key="novo_col_input")
+        posicao_k = c_k2.number_input(
+            "Posição (1 a N):", 
+            min_value=1, 
+            max_value=len(st.session_state["colunas_kanban_custom"]) + 1, 
+            value=len(st.session_state["colunas_kanban_custom"]) + 1,
+            key="posicao_col_input"
+        )
+
+        c_k3.button("➕ Criar Coluna Dinâmica", on_click=processar_nova_coluna)
+
+        if "sucesso_msg_col" in st.session_state and st.session_state["sucesso_msg_col"]:
+            st.success(st.session_state["sucesso_msg_col"])
+            st.session_state["sucesso_msg_col"] = ""
 
         st.divider()
         c_r1, c_r2, c_r3 = st.columns([1.5, 1, 1])
@@ -1397,7 +1481,7 @@ with tabs[4]:
                 )
 
                 if arq.lower().endswith((".png", ".jpg", ".jpeg")):
-                    st.image(caminho_arq, use_container_width=True)
+                    st.image(caminho_arq, use_column_width=True)
 
                 with open(caminho_arq, "rb") as f_data:
                     st.download_button(
@@ -1442,17 +1526,25 @@ with tabs[5]:
         df_sla["Dias_Corridos"] = (now_br_dt - df_sla["dt_inicio_parsed"]).dt.days
         df_sla["Dias_Para_Vencer"] = (df_sla["dt_prazo_parsed"] - now_br_dt).dt.days
 
+        # Proteção contra divisão por zero
+        total_acoes = len(df_sla)
+        taxa_conformidade = ((len(df_sla[df_sla['Status'] == 'Concluído']) / total_acoes) * 100) if total_acoes > 0 else 0.0
+        lead_time_medio = df_sla['Dias_Corridos'].mean() if total_acoes > 0 else 0.0
+
         st.markdown("#### 📊 Painel de Desempenho e Matriz de SLA do Projeto")
         s1, s2, s3 = st.columns(3)
-        s1.metric("⏱️ Lead Time Médio de Ações", f"{df_sla['Dias_Corridos'].mean():.1f} Dias")
-        s2.metric("🎯 Taxa de Conformidade no Prazo", f"{((len(df_sla[df_sla['Status'] == 'Concluído']) / len(df_sla))*100):.1f}%")
+        s1.metric("⏱️ Lead Time Médio de Ações", f"{lead_time_medio:.1f} Dias")
+        s2.metric("🎯 Taxa de Conformidade no Prazo", f"{taxa_conformidade:.1f}%")
         s3.metric("⚠️ Apontamentos Críticos Ativos", f"{len(df_sla[df_sla['Severidade'] == 'Crítica'])} Ações")
 
         st.divider()
 
         st.markdown("#### 📋 Matriz Analítica Executiva de SLA")
         cols_sla_render = ["ID", "Cliente_Projeto", "Achado", "Severidade", "Nome_Responsavel", "Status", "Dias_Corridos", "Dias_Para_Vencer"]
-        st.dataframe(df_sla[cols_sla_render], use_container_width=True)
+        
+        # Garante a exibição das colunas mapeadas que existem no DataFrame
+        cols_existentes = [c for c in cols_sla_render if c in df_sla.columns]
+        st.dataframe(df_sla[cols_existentes], use_container_width=True)
 
     st.divider()
     try:
@@ -1465,7 +1557,6 @@ with tabs[5]:
         )
     except Exception as e:
         st.error(f"Erro ao gerar planilha Excel: {e}")
-
 
 # ---------------------------------------------------------
 # TELA 7: AUDITORIA MASTER
