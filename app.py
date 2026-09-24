@@ -7,6 +7,9 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 # FUSO HORÁRIO BRASIL (UTC-3)
 TZ_BR = datetime.timezone(datetime.timedelta(hours=-3))
@@ -120,7 +123,7 @@ if not os.path.exists(PASTA_EVIDENCIAS):
     os.makedirs(PASTA_EVIDENCIAS)
 
 
-# 2. HELPER FUNCTIONS & SUPORTE ALFANUMÉRICO
+# 2. HELPER FUNCTIONS & EXCLUSÃO EM CASCATA DE ANEXOS
 def formatar_data_br(val_data):
     if not val_data or str(val_data).strip() in ["-", "", "nan", "None"]:
         return "-"
@@ -145,6 +148,38 @@ def extrair_data_ultima_acao(json_str, data_inicio_fallback):
     except:
         pass
     return formatar_data_br(data_inicio_fallback)
+
+
+def apagar_anexos_do_apontamento(id_apontamento, timeline_json_str=None):
+    """Garante a exclusão física de todos os anexos atrelados ao projeto excluído."""
+    removidos = 0
+    try:
+        # 1. Remove pelo padrão de nome ID_...
+        prefixo = f"{str(id_apontamento).strip()}_"
+        if os.path.exists(PASTA_EVIDENCIAS):
+            for arq in os.listdir(PASTA_EVIDENCIAS):
+                if arq.startswith(prefixo):
+                    caminho_completo = os.path.join(PASTA_EVIDENCIAS, arq)
+                    if os.path.isfile(caminho_completo):
+                        os.remove(caminho_completo)
+                        removidos += 1
+
+        # 2. Varre o JSON de timeline para garantir arquivos nomeados diferentemente
+        if timeline_json_str:
+            try:
+                timeline = json.loads(str(timeline_json_str))
+                for item in timeline:
+                    nome_anexo = item.get("Anexo")
+                    if nome_anexo:
+                        caminho_f = os.path.join(PASTA_EVIDENCIAS, str(nome_anexo))
+                        if os.path.isfile(caminho_f):
+                            os.remove(caminho_f)
+                            removidos += 1
+            except:
+                pass
+    except Exception as e:
+        print(f"Aviso ao remover anexos: {e}")
+    return removidos
 
 
 def registrar_log(usuario, acao, detalhe):
@@ -181,7 +216,6 @@ def carregar_usuarios():
                     df_u[col] = ""
                 df_u[col] = df_u[col].fillna("").astype(str).str.strip()
             
-            # GARANTIA MASTER COM SUPORTE ALFANUMÉRICO
             mask_master = df_u["Usuario"].str.lower() == "mribeiro1"
             if not mask_master.any():
                 novo_master = pd.DataFrame([{
@@ -425,6 +459,134 @@ def salvar_dados(dataframe):
         st.error(f"Erro ao salvar alterações da matriz: {e}")
 
 
+# 3. GERADOR DE EXCEL EXECUTIVO ESTILIZADO (OPENPYXL ENTERPRISE)
+def gerar_excel_estilizado(df_export):
+    output = io.BytesIO()
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Matriz_Auditoria"
+
+    df_base_exp = df_export.copy()
+    
+    # Colunas Amigáveis para Exportação
+    colunas_visiveis = [
+        "ID", "Cliente_Projeto", "Agencia", "Categoria", "Severidade",
+        "Achado", "Acao_Corretiva", "Area_Responsavel", "Nome_Responsavel",
+        "Email_Responsavel", "Data_Inicio", "Prazo", "Data_Conclusao", "Status"
+    ]
+    
+    cols_existentes = [c for c in colunas_visiveis if c in df_base_exp.columns]
+    df_base_exp = df_base_exp[cols_existentes]
+
+    # Formatar datas
+    for c_date in ["Data_Inicio", "Prazo", "Data_Conclusao"]:
+        if c_date in df_base_exp.columns:
+            df_base_exp[c_date] = df_base_exp[c_date].apply(formatar_data_br)
+
+    # Escrever Título do Relatório
+    ws.merge_cells("A1:N1")
+    title_cell = ws["A1"]
+    title_cell.value = "RELATÓRIO EXECUTIVO DE GOVERNANÇA, RISCOS & COMPLIANCE"
+    title_cell.font = Font(name="Calibri", size=16, bold=True, color="FFFFFF")
+    title_cell.fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 40
+
+    # Data de Geração
+    ws.merge_cells("A2:N2")
+    sub_cell = ws["A2"]
+    sub_cell.value = f"Gerado em: {get_now_br().strftime('%d/%m/%Y às %H:%M:%S')} | Maringá Turismo"
+    sub_cell.font = Font(name="Calibri", size=10, italic=True, color="64748B")
+    sub_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[2].height = 20
+
+    # Escrever Cabeçalhos das Colunas (Linha 4)
+    headers = list(df_base_exp.columns)
+    ws.append([]) # Linha 3 vazia
+    ws.append(headers) # Linha 4
+
+    header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    thin_border = Border(
+        left=Side(style="thin", color="CBD5E1"),
+        right=Side(style="thin", color="CBD5E1"),
+        top=Side(style="thin", color="CBD5E1"),
+        bottom=Side(style="thin", color="CBD5E1")
+    )
+
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=4, column=col_num)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = thin_border
+    ws.row_dimensions[4].height = 28
+
+    # Estilos de Cores para Status e Severidade
+    fill_red = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
+    font_red = Font(name="Calibri", size=10, color="991B1B", bold=True)
+    
+    fill_green = PatternFill(start_color="DCFCE7", end_color="DCFCE7", fill_type="solid")
+    font_green = Font(name="Calibri", size=10, color="166534", bold=True)
+    
+    fill_yellow = PatternFill(start_color="FEF9C3", end_color="FEF9C3", fill_type="solid")
+    font_yellow = Font(name="Calibri", size=10, color="854D0E", bold=True)
+
+    fill_zebra = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+
+    # Preencher Linhas de Dados
+    for row_idx, row_data in enumerate(df_base_exp.values, start=5):
+        ws.append(list(row_data))
+        ws.row_dimensions[row_idx].height = 22
+        
+        is_even = (row_idx % 2 == 0)
+
+        for col_idx, value in enumerate(row_data, start=1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.font = Font(name="Calibri", size=10)
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical="center", horizontal="left")
+
+            if is_even:
+                cell.fill = fill_zebra
+
+            col_header = headers[col_idx - 1]
+
+            # Destaques Condicionais
+            if col_header == "Severidade":
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                val_s = str(value).lower()
+                if "crítica" in val_s or "critica" in val_s:
+                    cell.fill, cell.font = fill_red, font_red
+                elif "alta" in val_s:
+                    cell.fill, cell.font = fill_yellow, font_yellow
+                elif "baixa" in val_s:
+                    cell.fill, cell.font = fill_green, font_green
+
+            elif col_header == "Status":
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                val_st = str(value).lower()
+                if "atrasado" in val_st:
+                    cell.fill, cell.font = fill_red, font_red
+                elif "concluído" in val_st or "concluido" in val_st:
+                    cell.fill, cell.font = fill_green, font_green
+                elif "andamento" in val_st or "validação" in val_st:
+                    cell.fill, cell.font = fill_yellow, font_yellow
+
+    # Ajuste Automático da Largura das Colunas
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            if cell.row > 2 and cell.value:
+                max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = min(max(max_len + 3, 12), 45)
+
+    wb.save(output)
+    output.seek(0)
+    return output
+
+
 def renderizar_anexo_elemento(nome_anexo, key_prefix):
     if not nome_anexo or str(nome_anexo).strip() in ["None", "null", ""]:
         return
@@ -479,7 +641,7 @@ def renderizar_painel_detalhes(id_modal):
         try:
             campos_c = json.loads(str(row_item.get("Campos_Custom_JSON", "{}")))
             if campos_c:
-                st.markdown("##### 🧩 Campos Personalizados Adicional")
+                st.markdown("##### 🧩 Campos Personalizados Adicionais")
                 cols_custom = st.columns(2)
                 for i, (k, v) in enumerate(campos_c.items()):
                     cols_custom[i % 2].write(f"**{k}:** {v}")
@@ -574,7 +736,7 @@ def renderizar_painel_detalhes(id_modal):
 
         with st.expander("⚠️ Área de Risco: Excluir Apontamento"):
             chk_del = st.checkbox(
-                "Eu compreendo e desejo excluir permanentemente este registro.",
+                "Eu compreendo e desejo excluir permanentemente este registro e todos os seus anexos físicos.",
                 key=f"chk_del_dlg_{row_item['ID']}",
             )
             if st.button(
@@ -584,12 +746,15 @@ def renderizar_painel_detalhes(id_modal):
                 disabled=not chk_del,
             ):
                 try:
+                    # Exclusão em Cascata dos Arquivos Físicos
+                    qtd_anexos_del = apagar_anexos_do_apontamento(row_item["ID"], row_item.get("Timeline_JSON"))
+                    
                     df_novo = df[df["ID"] != row_item["ID"]].copy()
                     salvar_dados(df_novo)
                     st.session_state["df_auditoria"] = df_novo
                     st.session_state["id_modal_aberto"] = None
-                    registrar_log(user_info["Usuario"], "Exclusão Apontamento", f"Excluiu apontamento {row_item['ID']}")
-                    st.success("Projeto excluído com sucesso!")
+                    registrar_log(user_info["Usuario"], "Exclusão Apontamento", f"Excluiu apontamento {row_item['ID']} e {qtd_anexos_del} anexo(s)")
+                    st.success(f"Projeto e {qtd_anexos_del} anexo(s) associado(s) excluídos com sucesso!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Erro ao excluir o projeto: {e}")
@@ -731,7 +896,7 @@ if "colunas_kanban_custom" not in st.session_state:
 if "form_counter" not in st.session_state:
     st.session_state["form_counter"] = 0
 
-# SURPRESA IA: RISK ASSISTANT NA SIDEBAR
+# ASSISTENTE PREDITIVO DE COMPLIANCE
 st.sidebar.divider()
 st.sidebar.markdown("🤖 **Assistente IA de Compliance**")
 with st.sidebar.expander("💡 Diagnóstico Preditivo de Riscos"):
@@ -788,14 +953,15 @@ if dt_ini_sb and dt_fim_sb:
 
 abas = [
     "📊 Painel Executivo (BI & Governança)",
-    "⚙️ Operações e Gestão de Projetos (CRUD)",
-    "📌 Central de Projetos (Kanban Interativo)",
-    "📤 Mestre Central de Anexos e Histórico",
+    "📈 Dashboard Analítico de KPIs",
+    "⚙️ Operações e Gestão (CRUD)",
+    "📌 Central de Projetos (Kanban)",
+    "📤 Mestre Central de Anexos",
     "📥 Extrator de Relatórios",
 ]
 
 if is_master:
-    abas.append("🛡️ Auditoria do Sistema e Acessos")
+    abas.append("🛡️ Auditoria Master")
 
 tabs = st.tabs(abas)
 
@@ -804,83 +970,31 @@ tabs = st.tabs(abas)
 # ---------------------------------------------------------
 with tabs[0]:
     st.markdown("### 📊 Painel Executivo de Governança, Riscos & Compliance")
-    st.caption(
-        "Maringá Turismo — Visão Consolidada de Riscos Operacionais e Soluções"
-    )
+    st.caption("Maringá Turismo — Visão Consolidada de Riscos Operacionais e Soluções")
 
     total_achados = len(df_filtrado)
     concluidos = len(df_filtrado[df_filtrado["Status"] == "Concluído"])
     em_validacao = len(df_filtrado[df_filtrado["Status"].str.contains("Validação", case=False, na=False)])
     atrasados = len(df_filtrado[df_filtrado["Status"].str.contains("Atrasado", case=False, na=False)])
 
-    taxa_resolucao = (
-        round((concluidos / total_achados) * 100, 1) if total_achados > 0 else 0
-    )
-
+    taxa_resolucao = round((concluidos / total_achados) * 100, 1) if total_achados > 0 else 0
     penalidade_atraso = atrasados * 15
-    penalidade_critica = (
-        len(df_filtrado[df_filtrado["Severidade"] == "Crítica"]) * 10
-    )
-    score_governança = max(
-        0, 100 - (penalidade_atraso + penalidade_critica)
-    )
+    penalidade_critica = len(df_filtrado[df_filtrado["Severidade"] == "Crítica"]) * 10
+    score_governança = max(0, 100 - (penalidade_atraso + penalidade_critica))
 
     k1, k2, k3, k4, k5 = st.columns(5)
 
     with k1:
-        st.markdown(
-            f"""<div class="kpi-card" style="border-left-color: #3b82f6;">
-            <div class="kpi-label">Total Apontamentos</div>
-            <div class="kpi-value">{total_achados}</div>
-            <div class="kpi-subtext" style="color:#64748b;">Geral Mapeado</div>
-        </div>""",
-            unsafe_allow_html=True,
-        )
-
+        st.markdown(f"""<div class="kpi-card" style="border-left-color: #3b82f6;"><div class="kpi-label">Total Apontamentos</div><div class="kpi-value">{total_achados}</div><div class="kpi-subtext" style="color:#64748b;">Geral Mapeado</div></div>""", unsafe_allow_html=True)
     with k2:
-        st.markdown(
-            f"""<div class="kpi-card" style="border-left-color: #22c55e;">
-            <div class="kpi-label">Ações Concluídas</div>
-            <div class="kpi-value">{concluidos}</div>
-            <div class="kpi-subtext">Taxa: {taxa_resolucao}%</div>
-        </div>""",
-            unsafe_allow_html=True,
-        )
-
+        st.markdown(f"""<div class="kpi-card" style="border-left-color: #22c55e;"><div class="kpi-label">Ações Concluídas</div><div class="kpi-value">{concluidos}</div><div class="kpi-subtext">Taxa: {taxa_resolucao}%</div></div>""", unsafe_allow_html=True)
     with k3:
-        st.markdown(
-            f"""<div class="kpi-card" style="border-left-color: #f97316;">
-            <div class="kpi-label">Em Validação / Auditor</div>
-            <div class="kpi-value">{em_validacao}</div>
-            <div class="kpi-subtext" style="color:#f97316;">Pendente Aprovação</div>
-        </div>""",
-            unsafe_allow_html=True,
-        )
-
+        st.markdown(f"""<div class="kpi-card" style="border-left-color: #f97316;"><div class="kpi-label">Em Validação / Auditor</div><div class="kpi-value">{em_validacao}</div><div class="kpi-subtext" style="color:#f97316;">Pendente Aprovação</div></div>""", unsafe_allow_html=True)
     with k4:
-        st.markdown(
-            f"""<div class="kpi-card" style="border-left-color: #ef4444;">
-            <div class="kpi-label">Ações Atrasadas</div>
-            <div class="kpi-value">{atrasados}</div>
-            <div class="kpi-subtext" style="color:#ef4444;">⚠️ Atenção Imediata</div>
-        </div>""",
-            unsafe_allow_html=True,
-        )
-
+        st.markdown(f"""<div class="kpi-card" style="border-left-color: #ef4444;"><div class="kpi-label">Ações Atrasadas</div><div class="kpi-value">{atrasados}</div><div class="kpi-subtext" style="color:#ef4444;">⚠️ Atenção Imediata</div></div>""", unsafe_allow_html=True)
     with k5:
-        cor_score = (
-            "#22c55e"
-            if score_governança >= 80
-            else ("#eab308" if score_governança >= 60 else "#ef4444")
-        )
-        st.markdown(
-            f"""<div class="kpi-card" style="border-left-color: {cor_score};">
-            <div class="kpi-label">Health Score Governança</div>
-            <div class="kpi-value" style="color: {cor_score};">{score_governança}%</div>
-            <div class="kpi-subtext" style="color: {cor_score};">Índice de Segurança</div>
-        </div>""",
-            unsafe_allow_html=True,
-        )
+        cor_score = "#22c55e" if score_governança >= 80 else ("#eab308" if score_governança >= 60 else "#ef4444")
+        st.markdown(f"""<div class="kpi-card" style="border-left-color: {cor_score};"><div class="kpi-label">Health Score Governança</div><div class="kpi-value" style="color: {cor_score};">{score_governança}%</div><div class="kpi-subtext" style="color: {cor_score};">Índice de Segurança</div></div>""", unsafe_allow_html=True)
 
     st.divider()
 
@@ -889,39 +1003,8 @@ with tabs[0]:
     with g1:
         st.markdown("##### 🍩 Distribuição por Status")
         if not df_filtrado.empty:
-            fig_donut = go.Figure(
-                data=[
-                    go.Pie(
-                        labels=df_filtrado["Status"].value_counts().index,
-                        values=df_filtrado["Status"].value_counts().values,
-                        hole=0.55,
-                        marker=dict(
-                            colors=[
-                                "#22c55e",
-                                "#3b82f6",
-                                "#f97316",
-                                "#ef4444",
-                                "#64748b",
-                            ]
-                        ),
-                        textinfo="label+percent",
-                    )
-                ]
-            )
-            fig_donut.update_layout(
-                showlegend=False,
-                margin=dict(t=20, b=20, l=10, r=10),
-                height=260,
-                annotations=[
-                    dict(
-                        text=f"<b>{total_achados}</b><br>Ações",
-                        x=0.5,
-                        y=0.5,
-                        font_size=16,
-                        showarrow=False,
-                    )
-                ],
-            )
+            fig_donut = go.Figure(data=[go.Pie(labels=df_filtrado["Status"].value_counts().index, values=df_filtrado["Status"].value_counts().values, hole=0.55, marker=dict(colors=["#22c55e", "#3b82f6", "#f97316", "#ef4444", "#64748b"]), textinfo="label+percent")])
+            fig_donut.update_layout(showlegend=False, margin=dict(t=20, b=20, l=10, r=10), height=260, annotations=[dict(text=f"<b>{total_achados}</b><br>Ações", x=0.5, y=0.5, font_size=16, showarrow=False)])
             st.plotly_chart(fig_donut, use_container_width=True)
         else:
             st.info("Sem dados para o filtro aplicado.")
@@ -929,108 +1012,115 @@ with tabs[0]:
     with g2:
         st.markdown("##### 📊 Matriz de Riscos por Área e Severidade")
         if not df_filtrado.empty:
-            fig_bar_sev = px.bar(
-                df_filtrado,
-                x="Area_Responsavel",
-                color="Severidade",
-                color_discrete_map={
-                    "Crítica": "#ef4444",
-                    "Alta": "#f97316",
-                    "Média": "#eab308",
-                    "Baixa": "#22c55e",
-                },
-                barmode="stack",
-                labels={
-                    "Area_Responsavel": "Área Responsável",
-                    "count": "Qtd Apontamentos",
-                },
-            )
-            fig_bar_sev.update_layout(
-                margin=dict(t=20, b=20, l=10, r=10),
-                height=260,
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="right",
-                    x=1,
-                ),
-            )
+            fig_bar_sev = px.bar(df_filtrado, x="Area_Responsavel", color="Severidade", color_discrete_map={"Crítica": "#ef4444", "Alta": "#f97316", "Média": "#eab308", "Baixa": "#22c55e"}, barmode="stack", labels={"Area_Responsavel": "Área Responsável", "count": "Qtd Apontamentos"})
+            fig_bar_sev.update_layout(margin=dict(t=20, b=20, l=10, r=10), height=260, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             st.plotly_chart(fig_bar_sev, use_container_width=True)
 
     with g3:
         st.markdown("##### 🏢 Concentração de Riscos por Unidade")
         if not df_filtrado.empty:
-            agencia_counts = (
-                df_filtrado["Agencia"].value_counts().reset_index()
-            )
+            agencia_counts = df_filtrado["Agencia"].value_counts().reset_index()
             agencia_counts.columns = ["Agencia", "Quantidade"]
-
-            fig_agencia = px.bar(
-                agencia_counts,
-                y="Agencia",
-                x="Quantidade",
-                orientation="h",
-                color_discrete_sequence=["#0284c7"],
-                text="Quantidade",
-            )
-            fig_agencia.update_layout(
-                margin=dict(t=20, b=20, l=10, r=10),
-                height=260,
-                xaxis_title="Apontamentos",
-                yaxis_title="",
-            )
+            fig_agencia = px.bar(agencia_counts, y="Agencia", x="Quantidade", orientation="h", color_discrete_sequence=["#0284c7"], text="Quantidade")
+            fig_agencia.update_layout(margin=dict(t=20, b=20, l=10, r=10), height=260, xaxis_title="Apontamentos", yaxis_title="")
             st.plotly_chart(fig_agencia, use_container_width=True)
 
     st.divider()
 
     st.markdown("### 📋 Matriz Geral de Apontamentos (Todos os Registros)")
-
     df_matriz_exibicao = df_filtrado.copy()
     if not df_matriz_exibicao.empty:
         df_matriz_exibicao["Data_Inicio"] = df_matriz_exibicao["Data_Inicio"].apply(formatar_data_br)
         df_matriz_exibicao["Prazo"] = df_matriz_exibicao["Prazo"].apply(formatar_data_br)
+        cols_exibir_matriz = ["ID", "Cliente_Projeto", "Achado", "Severidade", "Area_Responsavel", "Nome_Responsavel", "Data_Inicio", "Prazo", "Ultima_Acao", "Status"]
+        st.dataframe(df_matriz_exibicao[cols_exibir_matriz], use_container_width=True, key="df_matriz_interativa")
 
-        cols_exibir_matriz = [
-            "ID",
-            "Cliente_Projeto",
-            "Achado",
-            "Severidade",
-            "Area_Responsavel",
-            "Nome_Responsavel",
-            "Data_Inicio",
-            "Prazo",
-            "Ultima_Acao",
-            "Status",
-        ]
-
-        st.dataframe(
-            df_matriz_exibicao[cols_exibir_matriz],
-            use_container_width=True,
-            key="df_matriz_interativa",
-        )
 
 # ---------------------------------------------------------
-# TELA 2: OPERAÇÕES E GESTÃO DE PROJETOS (INCLUSÃO DE CAMPOS ADICIONAIS & AUTO-RESET)
+# TELA 2: DASHBOARD ANALÍTICO DE KPIS & MATRIZ DE RISCO 5X5
 # ---------------------------------------------------------
 with tabs[1]:
+    st.markdown("### 📈 Dashboard Analítico de KPIs & Matriz de Risco 5x5")
+    st.caption("Visão Avançada de Performance Operacional, SLA e Correlação de Severidades.")
+
+    if not df_filtrado.empty:
+        df_kpi = df_filtrado.copy()
+        df_kpi["dt_inicio_parsed"] = pd.to_datetime(df_kpi["Data_Inicio"], errors="coerce")
+        df_kpi["dt_prazo_parsed"] = pd.to_datetime(df_kpi["Prazo"], errors="coerce")
+        now_dt = pd.to_datetime(get_now_br().strftime("%Y-%m-%d"))
+
+        df_kpi["Dias_Corridos"] = (now_dt - df_kpi["dt_inicio_parsed"]).dt.days.fillna(0)
+        df_kpi["Dias_Atraso_Real"] = (now_dt - df_kpi["dt_prazo_parsed"]).dt.days.apply(lambda x: max(0, x))
+
+        dk1, dk2, dk3, dk4 = st.columns(4)
+        dk1.metric("⏱️ Lead Time Médio", f"{df_kpi['Dias_Corridos'].mean():.1f} Dias")
+        dk2.metric("🎯 Conformidade SLA", f"{((len(df_kpi[df_kpi['Status'] == 'Concluído']) / len(df_kpi))*100):.1f}%")
+        dk3.metric("⚠️ Atraso Médio das Pendências", f"{df_kpi['Dias_Atraso_Real'].mean():.1f} Dias")
+        dk4.metric("📊 Índice Risco Crítico", f"{((len(df_kpi[df_kpi['Severidade'] == 'Crítica']) / len(df_kpi))*100):.1f}%")
+
+        st.divider()
+
+        d_col1, d_col2 = st.columns([1.5, 1])
+
+        with d_col1:
+            st.markdown("##### 🎯 Heatmap - Matriz de Riscos 5x5 (Severidade x SLA)")
+            
+            # Construção da Matriz de Risco 5x5
+            df_kpi["Faixa_SLA"] = pd.cut(
+                df_kpi["Dias_Corridos"],
+                bins=[-1, 7, 15, 30, 60, 9999],
+                labels=["0-7 dias", "8-15 dias", "16-30 dias", "31-60 dias", "> 60 dias"]
+            )
+            
+            matriz_pivot = pd.crosstab(
+                df_kpi["Severidade"],
+                df_kpi["Faixa_SLA"],
+                dropna=False
+            ).reindex(["Baixa", "Média", "Alta", "Crítica"], fill_value=0)
+
+            fig_heatmap = px.imshow(
+                matriz_pivot,
+                labels=dict(x="Tempo de Resposta em Aberto", y="Severidade do Achado", color="Qtd Ações"),
+                x=matriz_pivot.columns,
+                y=matriz_pivot.index,
+                color_continuous_scale="Reds",
+                text_auto=True
+            )
+            fig_heatmap.update_layout(height=320, margin=dict(t=10, b=10, l=10, r=10))
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+
+        with d_col2:
+            st.markdown("##### 🏆 Ranking de Gargalo por Responsável")
+            df_resp_gargalo = df_kpi[df_kpi["Status"] != "Concluído"]["Nome_Responsavel"].value_counts().reset_index()
+            df_resp_gargalo.columns = ["Responsável", "Ações Pendentes"]
+            
+            fig_resp = px.bar(
+                df_resp_gargalo.head(5),
+                x="Ações Pendentes",
+                y="Responsável",
+                orientation="h",
+                color="Ações Pendentes",
+                color_continuous_scale="Oranges"
+            )
+            fig_resp.update_layout(height=320, margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
+            st.plotly_chart(fig_resp, use_container_width=True)
+    else:
+        st.info("Sem dados para alimentar os indicadores.")
+
+
+# ---------------------------------------------------------
+# TELA 3: OPERAÇÕES E GESTÃO DE PROJETOS (CRUD + ID AUTO)
+# ---------------------------------------------------------
+with tabs[2]:
     st.markdown("### ⚙️ Gestão de Projetos e Apontamentos")
     st.caption("Ações diretas de Abertura, Modificação e Exclusão de Apontamentos de Auditoria.")
 
-    sub_t1, sub_t2, sub_t3 = st.tabs(
-        [
-            "➕ Incluir Novo Projeto / Achado",
-            "✏️ Editar Projeto Existente",
-            "🗑️ Excluir Projeto",
-        ]
-    )
+    sub_t1, sub_t2, sub_t3 = st.tabs(["➕ Incluir Novo Projeto", "✏️ Editar Projeto", "🗑️ Excluir Projeto"])
 
     with sub_t1:
-        st.markdown("##### ➕ Formulario de Abertura de Apontamento")
-        
-        # GERADOR DE ID AUTOMÁTICO VISÍVEL
+        st.markdown("##### ➕ Formulário de Abertura de Apontamento")
         id_sugerido = gerar_novo_id(df)
-        st.info(f"🆔 **Novo ID a ser gerado automaticamente:** `{id_sugerido}`")
+        st.info(f"🆔 **Novo ID gerado automaticamente:** `{id_sugerido}`")
 
         with st.form("form_inc_proj_novo", clear_on_submit=True):
             c_i1, c_i2 = st.columns(2)
@@ -1053,7 +1143,7 @@ with tabs[1]:
             st.markdown("---")
             st.markdown("##### 🧩 Criar Campo Personalizado Adicional")
             c_cust1, c_cust2 = st.columns(2)
-            campo_cust_nome = c_cust1.text_input("Nome do Novo Campo (Ex: Fornecedor, SLA):")
+            campo_cust_nome = c_cust1.text_input("Nome do Novo Campo:")
             campo_cust_valor = c_cust2.text_input("Valor do Campo:")
 
             if st.form_submit_button("➕ Criar Registro Definitivo"):
@@ -1069,30 +1159,26 @@ with tabs[1]:
                         if campo_cust_nome and campo_cust_valor:
                             dict_custom[campo_cust_nome] = campo_cust_valor
 
-                        novo_registro = pd.DataFrame(
-                            [
-                                {
-                                    "ID": str(novo_id),
-                                    "Cliente_Projeto": str(inc_proj),
-                                    "Agencia": str(inc_ag),
-                                    "Etapa_SIPOC": "Geral",
-                                    "Categoria": "Compliance",
-                                    "Achado": str(inc_achado),
-                                    "Severidade": str(inc_sev),
-                                    "Acao_Corretiva": str(inc_acao),
-                                    "Area_Responsavel": str(inc_area),
-                                    "Nome_Responsavel": str(inc_resp),
-                                    "Email_Responsavel": str(inc_email),
-                                    "Data_Inicio": data_inicio_str,
-                                    "Prazo": prazo_str,
-                                    "Data_Conclusao": "-",
-                                    "Status": st.session_state["colunas_kanban_custom"][0],
-                                    "Timeline_JSON": "[]",
-                                    "Campos_Custom_JSON": json.dumps(dict_custom, ensure_ascii=False),
-                                    "Ultima_Acao": formatar_data_br(data_inicio_str),
-                                }
-                            ]
-                        )
+                        novo_registro = pd.DataFrame([{
+                            "ID": str(novo_id),
+                            "Cliente_Projeto": str(inc_proj),
+                            "Agencia": str(inc_ag),
+                            "Etapa_SIPOC": "Geral",
+                            "Categoria": "Compliance",
+                            "Achado": str(inc_achado),
+                            "Severidade": str(inc_sev),
+                            "Acao_Corretiva": str(inc_acao),
+                            "Area_Responsavel": str(inc_area),
+                            "Nome_Responsavel": str(inc_resp),
+                            "Email_Responsavel": str(inc_email),
+                            "Data_Inicio": data_inicio_str,
+                            "Prazo": prazo_str,
+                            "Data_Conclusao": "-",
+                            "Status": st.session_state["colunas_kanban_custom"][0],
+                            "Timeline_JSON": "[]",
+                            "Campos_Custom_JSON": json.dumps(dict_custom, ensure_ascii=False),
+                            "Ultima_Acao": formatar_data_br(data_inicio_str),
+                        }])
                         df_novo = pd.concat([df, novo_registro], ignore_index=True)
                         salvar_dados(df_novo)
                         st.session_state["df_auditoria"] = df_novo
@@ -1104,16 +1190,9 @@ with tabs[1]:
 
     with sub_t2:
         if not df.empty:
-            proj_sel_ed = st.selectbox(
-                "Selecione o Projeto / Cliente para Editar:",
-                options=df["Cliente_Projeto"].unique(),
-                key="sb_ed_proj",
-            )
+            proj_sel_ed = st.selectbox("Selecione o Projeto / Cliente para Editar:", options=df["Cliente_Projeto"].unique(), key="sb_ed_proj")
             df_sub_ed = df[df["Cliente_Projeto"] == proj_sel_ed]
-
-            id_ed = st.selectbox(
-                "Apontamento Vinculado:", options=df_sub_ed["ID"].unique()
-            )
+            id_ed = st.selectbox("Apontamento Vinculado:", options=df_sub_ed["ID"].unique())
             row_ed = df[df["ID"] == id_ed].iloc[0]
 
             with st.form("form_ed_proj"):
@@ -1130,11 +1209,7 @@ with tabs[1]:
                 if row_ed["Status"] in st.session_state["colunas_kanban_custom"]:
                     idx_st = st.session_state["colunas_kanban_custom"].index(row_ed["Status"])
 
-                ed_status = st.selectbox(
-                    "Status:",
-                    st.session_state["colunas_kanban_custom"],
-                    index=idx_st,
-                )
+                ed_status = st.selectbox("Status:", st.session_state["colunas_kanban_custom"], index=idx_st)
 
                 if st.form_submit_button("💾 Salvar Alterações"):
                     try:
@@ -1159,38 +1234,35 @@ with tabs[1]:
 
     with sub_t3:
         if not df.empty:
-            st.warning("⚠️ Atenção: A exclusão de um projeto é irreversível.")
-            proj_sel_del = st.selectbox(
-                "Selecione o Projeto para Excluir:",
-                options=df["Cliente_Projeto"].unique(),
-                key="sb_del_proj",
-            )
+            st.warning("⚠️ Atenção: A exclusão de um projeto apaga permanentemente o registro e TODOS os anexos físicos vinculados!")
+            proj_sel_del = st.selectbox("Selecione o Projeto para Excluir:", options=df["Cliente_Projeto"].unique(), key="sb_del_proj")
             df_sub_del = df[df["Cliente_Projeto"] == proj_sel_del]
             id_del = st.selectbox("ID do Apontamento:", options=df_sub_del["ID"].unique(), key="sb_del_id")
 
-            chk_crud_del = st.checkbox("Confirmo que desejo apagar permanentemente este projeto do banco de dados.", key="chk_crud_del")
+            chk_crud_del = st.checkbox("Confirmo que desejo apagar permanentemente este projeto e seus arquivos físicos.", key="chk_crud_del")
 
-            if st.button("🗑️ CONFIRMAR EXCLUSÃO DO PROJETO", type="primary", disabled=not chk_crud_del):
+            if st.button("🗑️ CONFIRMAR EXCLUSÃO DO PROJETO E ANEXOS", type="primary", disabled=not chk_crud_del):
                 try:
+                    row_del = df[df["ID"] == id_del].iloc[0]
+                    qtd_del = apagar_anexos_do_apontamento(id_del, row_del.get("Timeline_JSON"))
+
                     df_novo = df[df["ID"] != id_del].copy()
                     salvar_dados(df_novo)
                     st.session_state["df_auditoria"] = df_novo
-                    registrar_log(user_info["Usuario"], "Exclusão Apontamento", f"Excluiu o apontamento {id_del}")
-                    st.success(f"Apontamento {id_del} excluído com sucesso!")
+                    registrar_log(user_info["Usuario"], "Exclusão Apontamento", f"Excluiu o apontamento {id_del} e {qtd_del} anexo(s)")
+                    st.success(f"Apontamento {id_del} e {qtd_del} arquivo(s) de evidência excluídos com sucesso!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Erro ao excluir o projeto: {e}")
 
+
 # ---------------------------------------------------------
-# TELA 3: CENTRAL DE PROJETOS (KANBAN CORRIGIDO E LIMPEZA DE INPUT)
+# TELA 4: CENTRAL DE PROJETOS (KANBAN INTERATIVO)
 # ---------------------------------------------------------
-with tabs[2]:
+with tabs[3]:
     st.markdown("### 📌 Quadro Visual de Projetos & Ações")
 
-    if (
-        "id_modal_aberto" in st.session_state
-        and st.session_state["id_modal_aberto"]
-    ):
+    if "id_modal_aberto" in st.session_state and st.session_state["id_modal_aberto"]:
         renderizar_painel_detalhes(st.session_state["id_modal_aberto"])
 
     with st.expander("🛠️ Personalizar e Reordenar Colunas do Kanban"):
@@ -1200,37 +1272,20 @@ with tabs[2]:
             st.session_state["novo_col_input"] = ""
 
         nova_col_k = c_k1.text_input("Nome da Nova Coluna:", key="novo_col_input")
-        posicao_k = c_k2.number_input(
-            "Posição (1 a N):",
-            min_value=1,
-            max_value=len(st.session_state["colunas_kanban_custom"]) + 1,
-            value=len(st.session_state["colunas_kanban_custom"]) + 1,
-        )
+        posicao_k = c_k2.number_input("Posição (1 a N):", min_value=1, max_value=len(st.session_state["colunas_kanban_custom"]) + 1, value=len(st.session_state["colunas_kanban_custom"]) + 1)
 
         if c_k3.button("➕ Criar Coluna Dinâmica"):
-            if (
-                nova_col_k
-                and nova_col_k.strip()
-                and nova_col_k.strip() not in st.session_state["colunas_kanban_custom"]
-            ):
+            if nova_col_k and nova_col_k.strip() and nova_col_k.strip() not in st.session_state["colunas_kanban_custom"]:
                 idx_pos = int(posicao_k) - 1
-                st.session_state["colunas_kanban_custom"].insert(
-                    idx_pos, nova_col_k.strip()
-                )
+                st.session_state["colunas_kanban_custom"].insert(idx_pos, nova_col_k.strip())
                 salvar_colunas_kanban(st.session_state["colunas_kanban_custom"])
                 st.success(f"Coluna '{nova_col_k.strip()}' criada com sucesso!")
                 st.session_state["novo_col_input"] = ""
                 st.rerun()
-            elif nova_col_k.strip() in st.session_state["colunas_kanban_custom"]:
-                st.warning("Esta coluna já existe no Kanban.")
 
         st.divider()
         c_r1, c_r2, c_r3 = st.columns([1.5, 1, 1])
-        col_del_k = c_r1.selectbox(
-            "Excluir Coluna:",
-            options=st.session_state["colunas_kanban_custom"],
-            key="sb_del_col",
-        )
+        col_del_k = c_r1.selectbox("Excluir Coluna:", options=st.session_state["colunas_kanban_custom"], key="sb_del_col")
         chk_col_del = c_r2.checkbox("Confirmar exclusão da coluna", key="chk_col_del")
 
         if c_r3.button("❌ Remover Coluna", disabled=not chk_col_del):
@@ -1248,7 +1303,6 @@ with tabs[2]:
 
             for _, row in itens.iterrows():
                 sev_class = f"card-{str(row['Severidade']).lower()}"
-
                 dt_ini_br = formatar_data_br(row.get('Data_Inicio'))
                 dt_prz_br = formatar_data_br(row.get('Prazo'))
 
@@ -1279,13 +1333,7 @@ with tabs[2]:
                     if col_nome in st.session_state["colunas_kanban_custom"]:
                         idx_col_atual = st.session_state["colunas_kanban_custom"].index(col_nome)
 
-                    st_mudar = st.selectbox(
-                        "Mover:",
-                        st.session_state["colunas_kanban_custom"],
-                        index=idx_col_atual,
-                        key=f"sb_st_c_{row['ID']}",
-                        label_visibility="collapsed",
-                    )
+                    st_mudar = st.selectbox("Mover:", st.session_state["colunas_kanban_custom"], index=idx_col_atual, key=f"sb_st_c_{row['ID']}", label_visibility="collapsed")
                     
                     if st_mudar != col_nome:
                         try:
@@ -1302,10 +1350,11 @@ with tabs[2]:
                         st.session_state["id_modal_aberto"] = row["ID"]
                         st.rerun()
 
+
 # ---------------------------------------------------------
-# TELA 4: MESTRE CENTRAL DE ANEXOS
+# TELA 5: MESTRE CENTRAL DE ANEXOS
 # ---------------------------------------------------------
-with tabs[3]:
+with tabs[4]:
     st.markdown("### 📤 Mestre Central de Anexos & Repositório Documental")
     st.caption("Centralização inteligente e auditoria visual de todas as evidências anexadas no sistema.")
 
@@ -1360,27 +1409,18 @@ with tabs[3]:
                     )
             idx_c += 1
 
+
 # ---------------------------------------------------------
-# TELA 5: EXTRATOR DE RELATÓRIOS
+# TELA 6: EXTRATOR DE RELATÓRIOS COM EXCEL ENTERPRISE
 # ---------------------------------------------------------
-with tabs[4]:
+with tabs[5]:
     st.markdown("### 📥 Extrator Inteligente & Análise de SLA de Governança")
-    st.caption("Geração de relatórios gerenciais e acompanhamento analítico do tempo de resposta (SLA) das ações.")
+    st.caption("Geração de relatórios gerenciais e exportação formatada em Excel Executivo.")
 
     f_c1, f_c2, f_c3 = st.columns(3)
-
-    proj_filtro_rel = f_c1.selectbox(
-        "Filtrar por Projeto:",
-        options=["Todos os Projetos"] + list(df["Cliente_Projeto"].unique()),
-        key="f_rel_proj",
-    )
-
-    dt_ini_rel_e = f_c2.date_input(
-        "Emissão (De):", value=datetime.date(2020, 1, 1), format="DD/MM/YYYY", key="f_rel_e_de"
-    )
-    dt_fim_rel_e = f_c3.date_input(
-        "Emissão (Até):", value=datetime.date(2030, 12, 31), format="DD/MM/YYYY", key="f_rel_e_ate"
-    )
+    proj_filtro_rel = f_c1.selectbox("Filtrar por Projeto:", options=["Todos os Projetos"] + list(df["Cliente_Projeto"].unique()), key="f_rel_proj")
+    dt_ini_rel_e = f_c2.date_input("Emissão (De):", value=datetime.date(2020, 1, 1), format="DD/MM/YYYY", key="f_rel_e_de")
+    dt_fim_rel_e = f_c3.date_input("Emissão (Até):", value=datetime.date(2030, 12, 31), format="DD/MM/YYYY", key="f_rel_e_ate")
 
     df_rel = df.copy()
 
@@ -1388,13 +1428,8 @@ with tabs[4]:
         df_rel = df_rel[df_rel["Cliente_Projeto"] == proj_filtro_rel]
 
     if dt_ini_rel_e and dt_fim_rel_e:
-        df_rel["dt_tmp_e"] = pd.to_datetime(
-            df_rel["Data_Inicio"], errors="coerce"
-        ).dt.date
-        df_rel = df_rel[
-            (df_rel["dt_tmp_e"] >= dt_ini_rel_e)
-            & (df_rel["dt_tmp_e"] <= dt_fim_rel_e)
-        ]
+        df_rel["dt_tmp_e"] = pd.to_datetime(df_rel["Data_Inicio"], errors="coerce").dt.date
+        df_rel = df_rel[(df_rel["dt_tmp_e"] >= dt_ini_rel_e) & (df_rel["dt_tmp_e"] <= dt_fim_rel_e)]
 
     st.divider()
 
@@ -1408,7 +1443,6 @@ with tabs[4]:
         df_sla["Dias_Para_Vencer"] = (df_sla["dt_prazo_parsed"] - now_br_dt).dt.days
 
         st.markdown("#### 📊 Painel de Desempenho e Matriz de SLA do Projeto")
-
         s1, s2, s3 = st.columns(3)
         s1.metric("⏱️ Lead Time Médio de Ações", f"{df_sla['Dias_Corridos'].mean():.1f} Dias")
         s2.metric("🎯 Taxa de Conformidade no Prazo", f"{((len(df_sla[df_sla['Status'] == 'Concluído']) / len(df_sla))*100):.1f}%")
@@ -1417,37 +1451,14 @@ with tabs[4]:
         st.divider()
 
         st.markdown("#### 📋 Matriz Analítica Executiva de SLA")
-        cols_sla_render = [
-            "ID",
-            "Cliente_Projeto",
-            "Achado",
-            "Severidade",
-            "Nome_Responsavel",
-            "Status",
-            "Dias_Corridos",
-            "Dias_Para_Vencer"
-        ]
+        cols_sla_render = ["ID", "Cliente_Projeto", "Achado", "Severidade", "Nome_Responsavel", "Status", "Dias_Corridos", "Dias_Para_Vencer"]
         st.dataframe(df_sla[cols_sla_render], use_container_width=True)
-
-    def gerar_excel_relatorio_cascata(df_export):
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df_base_exp = df_export.copy()
-            df_base_exp["Data_Inicio"] = df_base_exp["Data_Inicio"].apply(formatar_data_br)
-            df_base_exp["Prazo"] = df_base_exp["Prazo"].apply(formatar_data_br)
-            df_base_exp["Data_Conclusao"] = df_base_exp["Data_Conclusao"].apply(formatar_data_br)
-
-            cols_limpas = [c for c in df_base_exp.columns if not c.startswith("dt_tmp")]
-            df_base_exp[cols_limpas].to_excel(writer, sheet_name="Base_Dados_Completa", index=False)
-
-        output.seek(0)
-        return output
 
     st.divider()
     try:
-        excel_bytes = gerar_excel_relatorio_cascata(df_rel)
+        excel_bytes = gerar_excel_estilizado(df_rel)
         st.download_button(
-            label="📊 Exportar Relatório Executivo Analítico em Excel (.xlsx)",
+            label="📊 Exportar Relatório Executivo Estilizado em Excel (.xlsx)",
             data=excel_bytes,
             file_name=f"Relatorio_Executivo_Compliance_{get_now_br().strftime('%d_%m_%Y')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1455,11 +1466,12 @@ with tabs[4]:
     except Exception as e:
         st.error(f"Erro ao gerar planilha Excel: {e}")
 
+
 # ---------------------------------------------------------
-# TELA 6: AUDITORIA MASTER
+# TELA 7: AUDITORIA MASTER
 # ---------------------------------------------------------
 if is_master:
-    with tabs[5]:
+    with tabs[6]:
         st.markdown("### 🛡️ Central Master de Auditoria de Sistema & Logs de Rastreabilidade")
         st.caption("Visão exclusiva de governança de TI, controle de privilégios de acesso e histórico completo de auditoria do sistema.")
 
@@ -1481,9 +1493,7 @@ if is_master:
 
         st.divider()
 
-        t_acessos, t_logs = st.tabs(
-            ["👥 Níveis de Acesso & Privilégios", "📜 Trilha Auditável Completa de Logs"]
-        )
+        t_acessos, t_logs = st.tabs(["👥 Níveis de Acesso & Privilégios", "📜 Trilha Auditável Completa de Logs"])
         df_u = carregar_usuarios()
 
         with t_acessos:
