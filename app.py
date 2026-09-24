@@ -99,15 +99,6 @@ st.markdown(
         margin-bottom: 12px;
         border-left: 4px solid #10b981;
     }
-    
-    /* IA Insights Box */
-    .ai-insights-box {
-        background: linear-gradient(135deg, #eff6ff 0%, #e0f2fe 100%);
-        border: 1px solid #bae6fd;
-        border-radius: 10px;
-        padding: 16px;
-        margin-bottom: 15px;
-    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -122,8 +113,7 @@ ARQUIVO_CONFIG = "config_kanban.json"
 if not os.path.exists(PASTA_EVIDENCIAS):
     os.makedirs(PASTA_EVIDENCIAS)
 
-
-# 2. HELPER FUNCTIONS & EXCLUSÃO EM CASCATA DE ANEXOS
+# 2. HELPER FUNCTIONS
 def formatar_data_br(val_data):
     if not val_data or str(val_data).strip() in ["-", "", "nan", "None"]:
         return "-"
@@ -133,28 +123,20 @@ def formatar_data_br(val_data):
     except:
         return str(val_data)
 
-
 def extrair_data_ultima_acao(json_str, data_inicio_fallback):
     try:
         timeline = json.loads(str(json_str))
         if timeline and len(timeline) > 0:
-            datas = [
-                item.get("Data", "")
-                for item in timeline
-                if item.get("Data", "")
-            ]
+            datas = [item.get("Data", "") for item in timeline if item.get("Data", "")]
             if datas:
                 return datas[-1]
     except:
         pass
     return formatar_data_br(data_inicio_fallback)
 
-
 def apagar_anexos_do_apontamento(id_apontamento, timeline_json_str=None):
-    """Garante a exclusão física de todos os anexos atrelados ao projeto excluído."""
     removidos = 0
     try:
-        # 1. Remove pelo padrão de nome ID_...
         prefixo = f"{str(id_apontamento).strip()}_"
         if os.path.exists(PASTA_EVIDENCIAS):
             for arq in os.listdir(PASTA_EVIDENCIAS):
@@ -164,7 +146,6 @@ def apagar_anexos_do_apontamento(id_apontamento, timeline_json_str=None):
                         os.remove(caminho_completo)
                         removidos += 1
 
-        # 2. Varre o JSON de timeline para garantir arquivos nomeados diferentemente
         if timeline_json_str:
             try:
                 timeline = json.loads(str(timeline_json_str))
@@ -181,20 +162,15 @@ def apagar_anexos_do_apontamento(id_apontamento, timeline_json_str=None):
         print(f"Aviso ao remover anexos: {e}")
     return removidos
 
-
 def registrar_log(usuario, acao, detalhe):
     try:
         data_hora = get_now_br().strftime("%d/%m/%Y %H:%M:%S")
-        novo_log = pd.DataFrame(
-            [
-                {
-                    "Data_Hora": data_hora,
-                    "Usuario": str(usuario),
-                    "Acao": str(acao),
-                    "Detalhe": str(detalhe),
-                }
-            ]
-        )
+        novo_log = pd.DataFrame([{
+            "Data_Hora": data_hora,
+            "Usuario": str(usuario),
+            "Acao": str(acao),
+            "Detalhe": str(detalhe),
+        }])
 
         if os.path.exists(ARQUIVO_LOGS):
             df_logs = pd.read_excel(ARQUIVO_LOGS, dtype=str)
@@ -206,7 +182,6 @@ def registrar_log(usuario, acao, detalhe):
     except Exception as e:
         st.warning(f"Não foi possível registrar o log do sistema: {e}")
 
-
 def carregar_usuarios():
     try:
         if os.path.exists(ARQUIVO_USUARIOS):
@@ -215,54 +190,31 @@ def carregar_usuarios():
                 if col not in df_u.columns:
                     df_u[col] = ""
                 df_u[col] = df_u[col].fillna("").astype(str).str.strip()
-            
-            mask_master = df_u["Usuario"].str.lower() == "mribeiro1"
-            if not mask_master.any():
-                novo_master = pd.DataFrame([{
+            return df_u
+        else:
+            usuarios_default = pd.DataFrame([
+                {
                     "Usuario": "mribeiro1",
                     "Senha": "123",
                     "Nome": "Marcos Ribeiro (Master)",
                     "Nivel": "Master",
-                    "Status": "Ativo"
-                }])
-                df_u = pd.concat([df_u, novo_master], ignore_index=True)
-                salvar_usuarios(df_u)
-            else:
-                idx_m = df_u[mask_master].index[0]
-                if df_u.loc[idx_m, "Status"] != "Ativo":
-                    df_u.loc[idx_m, "Status"] = "Ativo"
-                    salvar_usuarios(df_u)
-
-            return df_u
-        else:
-            usuarios_default = pd.DataFrame(
-                [
-                    {
-                        "Usuario": "mribeiro1",
-                        "Senha": "123",
-                        "Nome": "Marcos Ribeiro (Master)",
-                        "Nivel": "Master",
-                        "Status": "Ativo",
-                    },
-                    {
-                        "Usuario": "auditor1",
-                        "Senha": "123",
-                        "Nome": "Auditor Operacional",
-                        "Nivel": "Gestor",
-                        "Status": "Ativo",
-                    },
-                ]
-            )
+                    "Status": "Ativo",
+                },
+                {
+                    "Usuario": "auditor1",
+                    "Senha": "123",
+                    "Nome": "Auditor Operacional",
+                    "Nivel": "Gestor",
+                    "Status": "Ativo",
+                },
+            ])
             for col in usuarios_default.columns:
                 usuarios_default[col] = usuarios_default[col].astype(str)
             usuarios_default.to_excel(ARQUIVO_USUARIOS, index=False)
             return usuarios_default
     except Exception as e:
         st.error(f"Erro ao carregar dados de usuários: {e}")
-        return pd.DataFrame(
-            columns=["Usuario", "Senha", "Nome", "Nivel", "Status"]
-        )
-
+        return pd.DataFrame(columns=["Usuario", "Senha", "Nome", "Nivel", "Status"])
 
 def salvar_usuarios(df_u):
     try:
@@ -273,14 +225,8 @@ def salvar_usuarios(df_u):
     except Exception as e:
         st.error(f"Erro ao salvar arquivo de usuários: {e}")
 
-
 def carregar_colunas_kanban():
-    padrao = [
-        "A Fazer / Atrasado",
-        "Em Andamento",
-        "Em Validação (Auditor)",
-        "Concluído",
-    ]
+    padrao = ["A Fazer / Atrasado", "Em Andamento", "Em Validação (Auditor)", "Concluído"]
     if os.path.exists(ARQUIVO_CONFIG):
         try:
             with open(ARQUIVO_CONFIG, "r", encoding="utf-8") as f:
@@ -290,14 +236,12 @@ def carregar_colunas_kanban():
             pass
     return padrao
 
-
 def salvar_colunas_kanban(colunas):
     try:
         with open(ARQUIVO_CONFIG, "w", encoding="utf-8") as f:
             json.dump({"colunas": colunas}, f, ensure_ascii=False, indent=2)
     except Exception as e:
         st.error(f"Erro ao salvar configuração do Kanban: {e}")
-
 
 def gerar_novo_id(dataframe):
     if dataframe.empty or "ID" not in dataframe.columns:
@@ -312,7 +256,6 @@ def gerar_novo_id(dataframe):
     
     proximo_num = max(numeros) + 1 if numeros else 1
     return f"AUD-{proximo_num:02d}"
-
 
 def carregar_dados():
     try:
@@ -429,26 +372,20 @@ def carregar_dados():
                 df_base[col] = default_val
 
         df_base["Ultima_Acao"] = df_base.apply(
-            lambda r: extrair_data_ultima_acao(
-                r.get("Timeline_JSON", "[]"), r.get("Data_Inicio", "-")
-            ),
+            lambda r: extrair_data_ultima_acao(r.get("Timeline_JSON", "[]"), r.get("Data_Inicio", "-")),
             axis=1,
         )
-
         return df_base
     except Exception as e:
         st.error(f"Erro ao carregar matriz de auditoria: {e}")
         return pd.DataFrame()
-
 
 def salvar_dados(dataframe):
     try:
         df_salvar = dataframe.copy()
         if "Timeline_JSON" in df_salvar.columns:
             df_salvar["Ultima_Acao"] = df_salvar.apply(
-                lambda r: extrair_data_ultima_acao(
-                    r.get("Timeline_JSON", "[]"), r.get("Data_Inicio", "-")
-                ),
+                lambda r: extrair_data_ultima_acao(r.get("Timeline_JSON", "[]"), r.get("Data_Inicio", "-")),
                 axis=1,
             )
         for col in df_salvar.columns:
@@ -458,7 +395,6 @@ def salvar_dados(dataframe):
     except Exception as e:
         st.error(f"Erro ao salvar alterações da matriz: {e}")
 
-
 # 3. GERADOR DE EXCEL EXECUTIVO ESTILIZADO (OPENPYXL ENTERPRISE)
 def gerar_excel_estilizado(df_export):
     output = io.BytesIO()
@@ -467,8 +403,6 @@ def gerar_excel_estilizado(df_export):
     ws.title = "Matriz_Auditoria"
 
     df_base_exp = df_export.copy()
-    
-    # Colunas Amigáveis para Exportação
     colunas_visiveis = [
         "ID", "Cliente_Projeto", "Agencia", "Categoria", "Severidade",
         "Achado", "Acao_Corretiva", "Area_Responsavel", "Nome_Responsavel",
@@ -478,12 +412,10 @@ def gerar_excel_estilizado(df_export):
     cols_existentes = [c for c in colunas_visiveis if c in df_base_exp.columns]
     df_base_exp = df_base_exp[cols_existentes]
 
-    # Formatar datas
     for c_date in ["Data_Inicio", "Prazo", "Data_Conclusao"]:
         if c_date in df_base_exp.columns:
             df_base_exp[c_date] = df_base_exp[c_date].apply(formatar_data_br)
 
-    # Escrever Título do Relatório
     ws.merge_cells("A1:N1")
     title_cell = ws["A1"]
     title_cell.value = "RELATÓRIO EXECUTIVO DE GOVERNANÇA, RISCOS & COMPLIANCE"
@@ -492,7 +424,6 @@ def gerar_excel_estilizado(df_export):
     title_cell.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 40
 
-    # Data de Geração
     ws.merge_cells("A2:N2")
     sub_cell = ws["A2"]
     sub_cell.value = f"Gerado em: {get_now_br().strftime('%d/%m/%Y às %H:%M:%S')} | Maringá Turismo"
@@ -500,10 +431,9 @@ def gerar_excel_estilizado(df_export):
     sub_cell.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[2].height = 20
 
-    # Escrever Cabeçalhos das Colunas (Linha 4)
     headers = list(df_base_exp.columns)
-    ws.append([]) # Linha 3 vazia
-    ws.append(headers) # Linha 4
+    ws.append([])
+    ws.append(headers)
 
     header_fill = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
     header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
@@ -522,7 +452,6 @@ def gerar_excel_estilizado(df_export):
         cell.border = thin_border
     ws.row_dimensions[4].height = 28
 
-    # Estilos de Cores para Status e Severidade
     fill_red = PatternFill(start_color="FEE2E2", end_color="FEE2E2", fill_type="solid")
     font_red = Font(name="Calibri", size=10, color="991B1B", bold=True)
     
@@ -534,11 +463,9 @@ def gerar_excel_estilizado(df_export):
 
     fill_zebra = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
 
-    # Preencher Linhas de Dados
     for row_idx, row_data in enumerate(df_base_exp.values, start=5):
         ws.append(list(row_data))
         ws.row_dimensions[row_idx].height = 22
-        
         is_even = (row_idx % 2 == 0)
 
         for col_idx, value in enumerate(row_data, start=1):
@@ -552,7 +479,6 @@ def gerar_excel_estilizado(df_export):
 
             col_header = headers[col_idx - 1]
 
-            # Destaques Condicionais
             if col_header == "Severidade":
                 cell.alignment = Alignment(horizontal="center", vertical="center")
                 val_s = str(value).lower()
@@ -573,7 +499,6 @@ def gerar_excel_estilizado(df_export):
                 elif "andamento" in val_st or "validação" in val_st:
                     cell.fill, cell.font = fill_yellow, font_yellow
 
-    # Ajuste Automático da Largura das Colunas
     for col in ws.columns:
         max_len = 0
         col_letter = get_column_letter(col[0].column)
@@ -586,7 +511,6 @@ def gerar_excel_estilizado(df_export):
     output.seek(0)
     return output
 
-
 def renderizar_anexo_elemento(nome_anexo, key_prefix):
     if not nome_anexo or str(nome_anexo).strip() in ["None", "null", ""]:
         return
@@ -594,7 +518,6 @@ def renderizar_anexo_elemento(nome_anexo, key_prefix):
     caminho = os.path.join(PASTA_EVIDENCIAS, str(nome_anexo))
     if os.path.exists(caminho):
         st.markdown(f"📎 **Anexo Registrado:** `{nome_anexo}`")
-
         if str(nome_anexo).lower().endswith((".png", ".jpg", ".jpeg")):
             st.image(caminho, use_container_width=True)
 
@@ -609,7 +532,6 @@ def renderizar_anexo_elemento(nome_anexo, key_prefix):
     else:
         st.caption(f"📎 Anexo vinculado (`{nome_anexo}`), mas arquivo não localizado no servidor.")
 
-
 def renderizar_painel_detalhes(id_modal):
     match_row = df[df["ID"] == id_modal]
     if match_row.empty:
@@ -620,9 +542,7 @@ def renderizar_painel_detalhes(id_modal):
     st.markdown("---")
     with st.container():
         c_head1, c_head2 = st.columns([6, 1])
-        c_head1.markdown(
-            f"## 📋 Detalhes do Apontamento #{row_item['ID']} — {row_item['Cliente_Projeto']}"
-        )
+        c_head1.markdown(f"## 📋 Detalhes do Apontamento #{row_item['ID']} — {row_item['Cliente_Projeto']}")
         if c_head2.button("❌ FECHAR", type="primary", key="btn_close_modal_direct"):
             st.session_state["id_modal_aberto"] = None
             st.rerun()
@@ -634,9 +554,7 @@ def renderizar_painel_detalhes(id_modal):
 
         st.markdown(f"**Achado Mapeado:** {row_item['Achado']}")
         st.markdown(f"**Ação Corretiva:** {row_item['Acao_Corretiva']}")
-        st.info(
-            f"🛫 **Data Início:** {formatar_data_br(row_item.get('Data_Inicio'))} | 🎯 **Prazo:** {formatar_data_br(row_item.get('Prazo'))} | ⏱️ **Última Ação:** {row_item.get('Ultima_Acao', '-')}"
-        )
+        st.info(f"🛫 **Data Início:** {formatar_data_br(row_item.get('Data_Inicio'))} | 🎯 **Prazo:** {formatar_data_br(row_item.get('Prazo'))} | ⏱️ **Última Ação:** {row_item.get('Ultima_Acao', '-')}")
 
         try:
             campos_c = json.loads(str(row_item.get("Campos_Custom_JSON", "{}")))
@@ -688,19 +606,13 @@ def renderizar_painel_detalhes(id_modal):
                             st.rerun()
 
                 if item.get("Anexo"):
-                    renderizar_anexo_elemento(
-                        item["Anexo"], key_prefix=f"mdl_{row_item['ID']}_{idx_t}"
-                    )
+                    renderizar_anexo_elemento(item["Anexo"], key_prefix=f"mdl_{row_item['ID']}_{idx_t}")
 
         st.markdown("##### ➕ Registrar Novo Comentário + Anexo")
         cnt = st.session_state["form_counter"]
         c_f1, c_f2 = st.columns([2, 1])
-        txt_coment = c_f1.text_area(
-            "Comentário sobre a evolução:", key=f"dlg_txt_{row_item['ID']}_{cnt}"
-        )
-        file_coment = c_f2.file_uploader(
-            "Upload de Evidência:", key=f"dlg_file_{row_item['ID']}_{cnt}"
-        )
+        txt_coment = c_f1.text_area("Comentário sobre a evolução:", key=f"dlg_txt_{row_item['ID']}_{cnt}")
+        file_coment = c_f2.file_uploader("Upload de Evidência:", key=f"dlg_file_{row_item['ID']}_{cnt}")
 
         if st.button("💾 Salvar Histórico", key=f"dlg_save_btn_{row_item['ID']}"):
             if txt_coment or file_coment:
@@ -722,9 +634,7 @@ def renderizar_painel_detalhes(id_modal):
                     timeline.append(novo_item)
 
                     idx_k = df[df["ID"] == row_item["ID"]].index[0]
-                    df.loc[idx_k, "Timeline_JSON"] = json.dumps(
-                        timeline, ensure_ascii=False
-                    )
+                    df.loc[idx_k, "Timeline_JSON"] = json.dumps(timeline, ensure_ascii=False)
                     salvar_dados(df)
                     st.session_state["df_auditoria"] = df
                     st.session_state["form_counter"] += 1
@@ -746,9 +656,7 @@ def renderizar_painel_detalhes(id_modal):
                 disabled=not chk_del,
             ):
                 try:
-                    # Exclusão em Cascata dos Arquivos Físicos
                     qtd_anexos_del = apagar_anexos_do_apontamento(row_item["ID"], row_item.get("Timeline_JSON"))
-                    
                     df_novo = df[df["ID"] != row_item["ID"]].copy()
                     salvar_dados(df_novo)
                     st.session_state["df_auditoria"] = df_novo
@@ -761,8 +669,7 @@ def renderizar_painel_detalhes(id_modal):
 
     st.markdown("---")
 
-
-# Autenticação
+# 4. AUTENTICAÇÃO E LOGIN
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
 if "usuario_logado" not in st.session_state:
@@ -770,15 +677,13 @@ if "usuario_logado" not in st.session_state:
 
 if not st.session_state["autenticado"]:
     st.title("🛡️ Portal de Governança & Compliance | Login")
-    tab_login, tab_cadastro = st.tabs(
-        ["🔑 Acesso ao Sistema", "📝 Solicitar Novo Acesso"]
-    )
+    tab_login, tab_cadastro = st.tabs(["🔑 Acesso ao Sistema", "📝 Solicitar Novo Acesso"])
     df_users = carregar_usuarios()
 
     with tab_login:
         with st.form("form_login"):
             usr = st.text_input("Usuário:")
-            pwd = st.text_input("Senha (Aceita Alfanumérico):", type="password")
+            pwd = st.text_input("Senha:", type="password")
             if st.form_submit_button("Entrar no Sistema"):
                 try:
                     match = df_users[
@@ -802,26 +707,20 @@ if not st.session_state["autenticado"]:
         with st.form("form_solicitar_acesso"):
             novo_usr = st.text_input("Nome de Usuário:")
             novo_nome = st.text_input("Nome Completo:")
-            nova_pwd = st.text_input("Senha (Aceita Letras, Números e Símbolos):", type="password")
+            nova_pwd = st.text_input("Senha:", type="password")
             if st.form_submit_button("Solicitar Acesso"):
                 try:
                     if str(novo_usr).strip() in df_users["Usuario"].values:
                         st.warning("Usuário já existente.")
                     elif novo_usr and nova_pwd:
-                        novo_row = pd.DataFrame(
-                            [
-                                {
-                                    "Usuario": str(novo_usr).strip(),
-                                    "Senha": str(nova_pwd).strip(),
-                                    "Nome": str(novo_nome).strip(),
-                                    "Nivel": "Gestor",
-                                    "Status": "Pendente",
-                                }
-                            ]
-                        )
-                        df_users = pd.concat(
-                            [df_users, novo_row], ignore_index=True
-                        )
+                        novo_row = pd.DataFrame([{
+                            "Usuario": str(novo_usr).strip(),
+                            "Senha": str(nova_pwd).strip(),
+                            "Nome": str(novo_nome).strip(),
+                            "Nivel": "Gestor",
+                            "Status": "Pendente",
+                        }])
+                        df_users = pd.concat([df_users, novo_row], ignore_index=True)
                         salvar_usuarios(df_users)
                         st.success("Solicitação enviada com sucesso!")
                     else:
@@ -831,20 +730,17 @@ if not st.session_state["autenticado"]:
 
     st.stop()
 
-# ---------------------------------------------------------
-# PAINEL PRINCIPAL
-# ---------------------------------------------------------
+# 5. PAINEL PRINCIPAL & SIDEBAR
 user_info = st.session_state["usuario_logado"]
 is_master = user_info["Nivel"] == "Master"
 
 st.sidebar.markdown(f"**Usuário:** {user_info['Nome']}")
 st.sidebar.markdown(f"**Nível:** `{user_info['Nivel']}`")
 
-# TROCA DE SENHA
 with st.sidebar.popover("🔑 Trocar Minha Senha"):
     st.write("### Alterar Senha")
     senha_atual = st.text_input("Senha Atual:", type="password")
-    nova_senha = st.text_input("Nova Senha (Alfanumérica):", type="password")
+    nova_senha = st.text_input("Nova Senha:", type="password")
 
     if st.button("Confirmar Alteração"):
         if not senha_atual or not nova_senha:
@@ -864,21 +760,13 @@ with st.sidebar.popover("🔑 Trocar Minha Senha"):
                     if senha_armazenada == str(senha_atual).strip():
                         df_u.loc[idx_u, "Senha"] = str(nova_senha).strip()
                         salvar_usuarios(df_u)
-
                         st.session_state["usuario_logado"]["Senha"] = str(nova_senha).strip()
-
-                        registrar_log(
-                            user_info["Usuario"],
-                            "Troca de Senha",
-                            "Senha alfanumérica alterada com sucesso",
-                        )
+                        registrar_log(user_info["Usuario"], "Troca de Senha", "Senha alterada com sucesso")
                         st.success("Senha alterada com sucesso!")
                     else:
                         st.error("Senha atual incorreta.")
             except Exception as e:
-                st.error(
-                    f"Ocorreu um erro ao tentar atualizar a senha: {str(e)}"
-                )
+                st.error(f"Ocorreu um erro ao atualizar a senha: {e}")
 
 if st.sidebar.button("🚪 Sair"):
     st.session_state["autenticado"] = False
@@ -889,30 +777,21 @@ if "df_auditoria" not in st.session_state:
 
 df = st.session_state["df_auditoria"]
 
-# CARREGAMENTO PERSISTENTE DAS COLUNAS DO KANBAN
 if "colunas_kanban_custom" not in st.session_state:
     st.session_state["colunas_kanban_custom"] = carregar_colunas_kanban()
 
 if "form_counter" not in st.session_state:
     st.session_state["form_counter"] = 0
 
-# =========================================================
-# FILTROS NA SIDEBAR & ASSISTENTE PREDITIVO DE COMPLIANCE
-# =========================================================
-
-# --- 1. ASSISTENTE IA DE COMPLIANCE (DIAGNÓSTICO PREDITIVO REFORMULADO) ---
+# ASSISTENTE IA PREDITIVO & FILTROS GERAIS
 st.sidebar.markdown("### 🤖 Assistente IA de Compliance")
 
 with st.sidebar.expander("💡 Diagnóstico Preditivo de Riscos", expanded=True):
-    # Cálculos dinâmicos baseados no DataFrame
     now_br = pd.to_datetime(get_now_br().strftime("%Y-%m-%d"))
-    
-    # Mapeamento de colunas de severidade e prazo
     col_sev = next((c for c in ["Severidade", "Criticidade", "Prioridade"] if c in df.columns), None)
     col_prazo = next((c for c in ["Prazo", "Data_Prazo", "Data_Fim"] if c in df.columns), None)
     col_status = next((c for c in ["Status", "Estado"] if c in df.columns), None)
 
-    # Métricas Dinâmicas
     qtd_criticos = 0
     if col_sev:
         qtd_criticos = len(df[df[col_sev].astype(str).str.contains("Alta|Crítica|Alta Severidade", case=False, na=False)])
@@ -922,7 +801,6 @@ with st.sidebar.expander("💡 Diagnóstico Preditivo de Riscos", expanded=True)
         df_prazos = pd.to_datetime(df[col_prazo], errors="coerce")
         qtd_atrasados = len(df[(df_prazos < now_br) & (df[col_status] != "Concluído")]) if col_status else len(df[df_prazos < now_br])
 
-    # Apresentação Visual Estilizada em HTML/CSS
     cor_alerta_critico = "#ef4444" if qtd_criticos > 0 else "#22c55e"
     cor_alerta_atraso = "#f59e0b" if qtd_atrasados > 0 else "#22c55e"
 
@@ -952,64 +830,36 @@ with st.sidebar.expander("💡 Diagnóstico Preditivo de Riscos", expanded=True)
         unsafe_allow_html=True
     )
 
-
-# --- 2. FILTROS GERAIS NA SIDEBAR ---
 st.sidebar.divider()
 st.sidebar.title("🔍 Filtros Gerais")
 
-# Filtro por Projeto / Cliente
 projetos_disponiveis = ["Todos os Projetos"] + list(df["Cliente_Projeto"].dropna().unique())
-projeto_selecionado = st.sidebar.selectbox(
-    "📌 Projeto / Cliente:", options=projetos_disponiveis
-)
+projeto_selecionado = st.sidebar.selectbox("📌 Projeto / Cliente:", options=projetos_disponiveis)
 
-# Filtro por Período de Emissão
 st.sidebar.write("📅 **Período de Emissão (Data Inicial):**")
 c_sb1, c_sb2 = st.sidebar.columns(2)
+dt_ini_sb = c_sb1.date_input("De:", value=datetime.date(2020, 1, 1), key="sb_dt_de", format="DD/MM/YYYY")
+dt_fim_sb = c_sb2.date_input("Até:", value=datetime.date(2030, 12, 31), key="sb_dt_ate", format="DD/MM/YYYY")
 
-dt_ini_sb = c_sb1.date_input(
-    "De:", value=datetime.date(2020, 1, 1), key="sb_dt_de", format="DD/MM/YYYY"
-)
-dt_fim_sb = c_sb2.date_input(
-    "Até:", value=datetime.date(2030, 12, 31), key="sb_dt_ate", format="DD/MM/YYYY"
-)
-
-# Filtro por Criador / Responsável (Garantia de Mapeamento)
 col_resp = next((c for c in ["Nome_Responsavel", "Usuario_Criador", "Criador", "Usuario", "Responsavel"] if c in df.columns), None)
 
 usuario_selecionado = "Todos os Responsáveis"
 if col_resp:
-    responsaveis_disponiveis = ["Todos os Responsáveis"] + sorted(
-        df[col_resp].dropna().astype(str).unique().tolist()
-    )
-    usuario_selecionado = st.sidebar.selectbox(
-        "👤 Criador / Responsável:",
-        options=responsaveis_disponiveis,
-        key="sb_usuario_sel"
-    )
-else:
-    # Se nenhuma coluna exata for encontrada, exibe informação de apoio
-    st.sidebar.info("💡 Coluna de responsável não detectada no banco de dados.")
+    responsaveis_disponiveis = ["Todos os Responsáveis"] + sorted(df[col_resp].dropna().astype(str).unique().tolist())
+    usuario_selecionado = st.sidebar.selectbox("👤 Criador / Responsável:", options=responsaveis_disponiveis, key="sb_usuario_sel")
 
-# --- 3. APLICAÇÃO DOS FILTROS NO DATAFRAME ---
 df_filtrado = df.copy()
 
 if projeto_selecionado != "Todos os Projetos":
     df_filtrado = df_filtrado[df_filtrado["Cliente_Projeto"] == projeto_selecionado]
 
 if dt_ini_sb and dt_fim_sb:
-    df_filtrado["dt_tmp_inicio"] = pd.to_datetime(
-        df_filtrado["Data_Inicio"], errors="coerce"
-    ).dt.date
-    df_filtrado = df_filtrado[
-        (df_filtrado["dt_tmp_inicio"] >= dt_ini_sb)
-        & (df_filtrado["dt_tmp_inicio"] <= dt_fim_sb)
-    ]
+    df_filtrado["dt_tmp_inicio"] = pd.to_datetime(df_filtrado["Data_Inicio"], errors="coerce").dt.date
+    df_filtrado = df_filtrado[(df_filtrado["dt_tmp_inicio"] >= dt_ini_sb) & (df_filtrado["dt_tmp_inicio"] <= dt_fim_sb)]
 
 if col_resp and usuario_selecionado != "Todos os Responsáveis":
     df_filtrado = df_filtrado[df_filtrado[col_resp] == usuario_selecionado]
 
-# --- 4. NAVEGAÇÃO DE ABAS ---
 abas = [
     "📊 Painel Executivo (BI & Governança)",
     "📈 Dashboard Analítico de KPIs",
@@ -1092,8 +942,8 @@ with tabs[0]:
         df_matriz_exibicao["Data_Inicio"] = df_matriz_exibicao["Data_Inicio"].apply(formatar_data_br)
         df_matriz_exibicao["Prazo"] = df_matriz_exibicao["Prazo"].apply(formatar_data_br)
         cols_exibir_matriz = ["ID", "Cliente_Projeto", "Achado", "Severidade", "Area_Responsavel", "Nome_Responsavel", "Data_Inicio", "Prazo", "Ultima_Acao", "Status"]
-        st.dataframe(df_matriz_exibicao[cols_exibir_matriz], use_container_width=True, key="df_matriz_interativa")
-
+        cols_disp = [c for c in cols_exibir_matriz if c in df_matriz_exibicao.columns]
+        st.dataframe(df_matriz_exibicao[cols_disp], use_container_width=True, key="df_matriz_interativa")
 
 # ---------------------------------------------------------
 # TELA 2: DASHBOARD ANALÍTICO DE KPIS & MATRIZ DE RISCO 5X5
@@ -1124,7 +974,6 @@ with tabs[1]:
         with d_col1:
             st.markdown("##### 🎯 Heatmap - Matriz de Riscos 5x5 (Severidade x SLA)")
             
-            # Construção da Matriz de Risco 5x5
             df_kpi["Faixa_SLA"] = pd.cut(
                 df_kpi["Dias_Corridos"],
                 bins=[-1, 7, 15, 30, 60, 9999],
@@ -1165,7 +1014,6 @@ with tabs[1]:
             st.plotly_chart(fig_resp, use_container_width=True)
     else:
         st.info("Sem dados para alimentar os indicadores.")
-
 
 # ---------------------------------------------------------
 # TELA 3: OPERAÇÕES E GESTÃO DE PROJETOS (CRUD + ID AUTO)
@@ -1314,9 +1162,8 @@ with tabs[2]:
                 except Exception as e:
                     st.error(f"Erro ao excluir o projeto: {e}")
 
-
 # ---------------------------------------------------------
-# TELA 4: CENTRAL DE PROJETOS (KANBAN)
+# TELA 4: CENTRAL DE PROJETOS (KANBAN COM GERENCIADOR)
 # ---------------------------------------------------------
 with tabs[3]:
     st.markdown("### 📌 Quadro Visual de Projetos & Ações")
@@ -1324,22 +1171,12 @@ with tabs[3]:
     if "id_modal_aberto" in st.session_state and st.session_state["id_modal_aberto"]:
         renderizar_painel_detalhes(st.session_state["id_modal_aberto"])
 
-    # --- NOVO: FILTRO RÁPIDO DE RESPONSÁVEL / CRIADOR ---
-    col_resp_existente = "Nome_Responsavel" if "Nome_Responsavel" in df_filtrado.columns else ("Usuario_Criador" if "Usuario_Criador" in df_filtrado.columns else None)
-    
-    if col_resp_existente:
-        lista_responsaveis = ["Todos os Responsáveis"] + sorted(df[col_resp_existente].dropna().astype(str).unique().tolist())
-        resp_sel = st.selectbox("👤 Filtrar Cartões por Criador / Responsável:", options=lista_responsaveis, key="f_kanban_resp")
-        if resp_sel != "Todos os Responsáveis":
-            df_filtrado = df_filtrado[df_filtrado[col_resp_existente] == resp_sel]
-
     with st.expander("🛠️ Personalizar e Reordenar Colunas do Kanban"):
         c_k1, c_k2, c_k3 = st.columns([1.5, 1, 1.2])
 
         if "novo_col_input" not in st.session_state:
             st.session_state["novo_col_input"] = ""
 
-        # Callback seguro para criação de colunas
         def processar_nova_coluna():
             nome_input = st.session_state.get("novo_col_input", "").strip()
             if nome_input and nome_input not in st.session_state["colunas_kanban_custom"]:
@@ -1396,8 +1233,12 @@ with tabs[3]:
                     <div style="font-size: 0.75rem; color: #0284c7; font-weight: bold; text-transform: uppercase; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; margin-bottom: 6px;">
                         🏢 {row['Cliente_Projeto']}
                     </div>
-                    <div style="font-size: 0.95rem; font-weight: bold; color: #0f172a; margin: 4px 0;">{row['Achado']}</div>
-                    <div style="font-size: 0.82rem; color: #475569; margin-bottom: 8px; line-height: 1.3;"><b>Ação:</b> {row['Acao_Corretiva']}</div>
+                    <div style="font-size: 0.90rem; font-weight: bold; color: #0f172a; margin: 4px 0;">
+                        📝 <b>Descrição do Desvio:</b> {row['Achado']}
+                    </div>
+                    <div style="font-size: 0.82rem; color: #475569; margin-bottom: 8px; line-height: 1.3;">
+                        🎯 <b>Ação Corretiva:</b> {row['Acao_Corretiva']}
+                    </div>
                     <div style="font-size: 0.72rem; color: #64748b; margin-bottom: 8px;">
                         🛫 <b>Início:</b> {dt_ini_br} | 🎯 <b>Prazo:</b> {dt_prz_br}
                     </div>
@@ -1434,9 +1275,8 @@ with tabs[3]:
                         st.session_state["id_modal_aberto"] = row["ID"]
                         st.rerun()
 
-
 # ---------------------------------------------------------
-# TELA 5: MESTRE CENTRAL DE ANEXOS
+# TELA 5: MESTRE CENTRAL DE ANEXOS COMPLETA
 # ---------------------------------------------------------
 with tabs[4]:
     st.markdown("### 📤 Mestre Central de Anexos & Repositório Documental")
@@ -1481,7 +1321,7 @@ with tabs[4]:
                 )
 
                 if arq.lower().endswith((".png", ".jpg", ".jpeg")):
-                    st.image(caminho_arq, use_column_width=True)
+                    st.image(caminho_arq, use_container_width=True)
 
                 with open(caminho_arq, "rb") as f_data:
                     st.download_button(
@@ -1493,9 +1333,8 @@ with tabs[4]:
                     )
             idx_c += 1
 
-
 # ---------------------------------------------------------
-# TELA 6: EXTRATOR DE RELATÓRIOS COM EXCEL ENTERPRISE
+# TELA 6: EXTRATOR DE RELATÓRIOS CONSOLIDADO
 # ---------------------------------------------------------
 with tabs[5]:
     st.markdown("### 📥 Extrator Inteligente & Análise de SLA de Governança")
@@ -1526,7 +1365,6 @@ with tabs[5]:
         df_sla["Dias_Corridos"] = (now_br_dt - df_sla["dt_inicio_parsed"]).dt.days
         df_sla["Dias_Para_Vencer"] = (df_sla["dt_prazo_parsed"] - now_br_dt).dt.days
 
-        # Proteção contra divisão por zero
         total_acoes = len(df_sla)
         taxa_conformidade = ((len(df_sla[df_sla['Status'] == 'Concluído']) / total_acoes) * 100) if total_acoes > 0 else 0.0
         lead_time_medio = df_sla['Dias_Corridos'].mean() if total_acoes > 0 else 0.0
@@ -1541,8 +1379,6 @@ with tabs[5]:
 
         st.markdown("#### 📋 Matriz Analítica Executiva de SLA")
         cols_sla_render = ["ID", "Cliente_Projeto", "Achado", "Severidade", "Nome_Responsavel", "Status", "Dias_Corridos", "Dias_Para_Vencer"]
-        
-        # Garante a exibição das colunas mapeadas que existem no DataFrame
         cols_existentes = [c for c in cols_sla_render if c in df_sla.columns]
         st.dataframe(df_sla[cols_existentes], use_container_width=True)
 
@@ -1559,7 +1395,7 @@ with tabs[5]:
         st.error(f"Erro ao gerar planilha Excel: {e}")
 
 # ---------------------------------------------------------
-# TELA 7: AUDITORIA MASTER
+# TELA 7: AUDITORIA MASTER COMPLETA
 # ---------------------------------------------------------
 if is_master:
     with tabs[6]:
